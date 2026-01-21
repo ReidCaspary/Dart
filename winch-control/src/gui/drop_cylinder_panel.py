@@ -65,6 +65,10 @@ class DropCylinderPanel(ttk.LabelFrame):
         self._jog_down_active = False
         self._jog_up_active = False
 
+        # Track trim state for auto-disable on stop
+        self._saved_trim_value = 0  # The user's actual trim setting
+        self._trim_zeroed = False   # True when we've zeroed trim due to STOP
+
         self._create_widgets()
 
     def _create_widgets(self) -> None:
@@ -179,12 +183,12 @@ class DropCylinderPanel(ttk.LabelFrame):
         ctrl_frame = ttk.Frame(self)
         ctrl_frame.grid(row=4, column=0, sticky="ew", pady=2)
 
-        ttk.Button(ctrl_frame, text="GO START", command=self._on_go_start, width=9).pack(side=tk.LEFT, padx=1)
+        ttk.Button(ctrl_frame, text="GO START", command=self._handle_go_start, width=9).pack(side=tk.LEFT, padx=1)
         ttk.Button(ctrl_frame, text="GO STOP", command=self._on_go_stop, width=9).pack(side=tk.LEFT, padx=1)
 
         self._stop_btn = tk.Button(
             ctrl_frame, text="STOP", font=("Arial", 9, "bold"),
-            bg="#D32F2F", fg="white", command=self._on_stop, width=6
+            bg="#D32F2F", fg="white", command=self._handle_stop, width=6
         )
         self._stop_btn.pack(side=tk.LEFT, padx=1)
 
@@ -220,6 +224,14 @@ class DropCylinderPanel(ttk.LabelFrame):
                                        width=4, command=self._on_trim_change)
         self._trim_spin.pack(side=tk.LEFT, padx=2)
         ttk.Label(adj_frame, text="us", font=("Arial", 8)).pack(side=tk.LEFT)
+
+        # Trim on/off toggle button
+        self._trim_toggle_btn = tk.Button(
+            adj_frame, text="ON", font=("Arial", 7, "bold"),
+            bg="#4CAF50", fg="white", width=3,
+            command=self._toggle_trim
+        )
+        self._trim_toggle_btn.pack(side=tk.LEFT, padx=(5, 0))
 
     def _on_mode_change(self) -> None:
         """Handle mode radio button change."""
@@ -299,6 +311,7 @@ class DropCylinderPanel(ttk.LabelFrame):
         if not self._jog_up_active and self._connected:
             self._jog_up_active = True
             self._jog_up_btn.configure(relief=tk.SUNKEN)
+            self._restore_trim_if_needed()  # Restore trim when moving up
             self._on_jog_up_press()
 
     def _on_jog_up_btn_release(self, event: tk.Event) -> None:
@@ -306,6 +319,49 @@ class DropCylinderPanel(ttk.LabelFrame):
             self._jog_up_active = False
             self._jog_up_btn.configure(relief=tk.RAISED)
             self._on_jog_up_release()
+
+    def _restore_trim_if_needed(self) -> None:
+        """Restore trim to saved value if it was zeroed by stop."""
+        if self._trim_zeroed and self._connected:
+            self._on_set_trim(self._saved_trim_value)
+            self._trim_var.set(self._saved_trim_value)
+            self._trim_zeroed = False
+            self._update_trim_button()
+
+    def _zero_trim_for_stop(self) -> None:
+        """Zero the trim when stopping (for when cylinder is on ground)."""
+        if self._connected and not self._trim_zeroed:
+            # Save current trim if not already zeroed
+            self._saved_trim_value = self._trim_var.get()
+            self._on_set_trim(0)
+            self._trim_var.set(0)
+            self._trim_zeroed = True
+            self._update_trim_button()
+
+    def _handle_stop(self) -> None:
+        """Handle STOP button - stop motion and zero trim."""
+        self._zero_trim_for_stop()
+        self._on_stop()
+
+    def _handle_go_start(self) -> None:
+        """Handle GO START button - restore trim and go to start position."""
+        self._restore_trim_if_needed()
+        self._on_go_start()
+
+    def _toggle_trim(self) -> None:
+        """Toggle trim on/off."""
+        if self._trim_zeroed:
+            self._restore_trim_if_needed()
+        else:
+            self._zero_trim_for_stop()
+        self._update_trim_button()
+
+    def _update_trim_button(self) -> None:
+        """Update trim toggle button appearance."""
+        if self._trim_zeroed:
+            self._trim_toggle_btn.config(text="OFF", bg="#D32F2F")
+        else:
+            self._trim_toggle_btn.config(text="ON", bg="#4CAF50")
 
     def _on_speed_change(self, value: str) -> None:
         speed = int(float(value))
@@ -315,7 +371,11 @@ class DropCylinderPanel(ttk.LabelFrame):
 
     def _on_trim_change(self) -> None:
         if self._connected:
-            self._on_set_trim(self._trim_var.get())
+            trim_value = self._trim_var.get()
+            self._saved_trim_value = trim_value  # Remember user's setting
+            self._trim_zeroed = False  # User manually set trim, so it's not zeroed
+            self._update_trim_button()
+            self._on_set_trim(trim_value)
 
     def set_connection_state(self, state: WifiConnectionState, connected: bool, mode: Optional[ConnectionMode] = None) -> None:
         """Update connection state display."""
@@ -373,6 +433,9 @@ class DropCylinderPanel(ttk.LabelFrame):
         else:
             self._stop_pos_var.set("---")
 
+        # Update trim display - but only update saved value if not currently zeroed
+        if not self._trim_zeroed:
+            self._saved_trim_value = status.trim_us
         self._trim_var.set(status.trim_us)
         self._speed_var.set(status.speed_percent)
         self._speed_label.config(text=f"{status.speed_percent}%")
