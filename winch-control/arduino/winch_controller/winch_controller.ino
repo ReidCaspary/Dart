@@ -53,11 +53,11 @@ static float maxRpsJog  = DEFAULT_MAX_RPS_JOG;
 static float maxRpsMove = DEFAULT_MAX_RPS_MOVE;
 
 
-static const float ACCEL_RPS2        = 3.80f;
+static const float ACCEL_RPS2        = 1.5f;
 
 static const float DECEL_RPS2        = 8.50f;
 
-static const float ACCEL_SOFT_RPS2   = 2.20f;
+static const float ACCEL_SOFT_RPS2   = 2.0f;
 
 
 static const uint32_t SOFTSTART_MS   = 350;
@@ -396,8 +396,42 @@ static void commandMoveTo(int64_t newTarget, uint32_t nowUs) {
 
 // ================= SERIAL COMMUNICATION =================
 
+// Send status response to GUI (only called when idle to avoid timing issues)
+// Format: POS:<steps> MODE:<IDLE|JOG|MOVE> SPD:<rps> HOME:<Y@steps|N> WELL:<Y@steps|N> ESTOP:<0|1> VJOG:<rps> VMOVE:<rps>
+static void sendStatus() {
+  bool eStopActive = (digitalRead(PIN_ESTOP) == HIGH);
+
+  Serial.print("POS:");
+  Serial.print((long)posSteps);
+  Serial.print(" MODE:");
+  if (mode == MODE_IDLE) Serial.print("IDLE");
+  else if (mode == MODE_JOG) Serial.print("JOG");
+  else Serial.print("MOVE");
+  Serial.print(" SPD:");
+  Serial.print(currentSps / STEPS_PER_REV, 2);
+  Serial.print(" HOME:");
+  if (homeSaved) { Serial.print("Y@"); Serial.print((long)homeSteps); }
+  else Serial.print("N");
+  Serial.print(" WELL:");
+  if (wellSaved) { Serial.print("Y@"); Serial.print((long)wellSteps); }
+  else Serial.print("N");
+  Serial.print(" ESTOP:");
+  Serial.print(eStopActive ? "1" : "0");
+  Serial.print(" VJOG:");
+  Serial.print(maxRpsJog, 2);
+  Serial.print(" VMOVE:");
+  Serial.println(maxRpsMove, 2);
+}
+
 static void processSerialCommand(const char* cmd, uint32_t nowUs) {
 
+  // Status query - only respond when idle to avoid timing issues during motion
+  if (strcmp(cmd, "?") == 0) {
+    if (mode == MODE_IDLE && currentSps < MIN_STEP_SPS) {
+      sendStatus();
+    }
+    return;
+  }
 
   // Jog commands
 
