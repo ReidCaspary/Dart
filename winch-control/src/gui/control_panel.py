@@ -2,14 +2,18 @@
 Control Panel
 
 Contains jog buttons, go-to controls, and stop button.
+Modern dark theme with styled buttons.
 """
 
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Optional
 
+from .theme import COLORS, FONTS
+from .widgets import HoldButton, ModernButton, ModernEntry
 
-class ControlPanel(ttk.Frame):
+
+class ControlPanel(tk.Frame):
     """
     Main control panel with jog buttons and motion controls.
 
@@ -33,7 +37,7 @@ class ControlPanel(ttk.Frame):
         on_go_to: Callable[[int], None],
         on_move_relative: Callable[[int], None]
     ):
-        super().__init__(parent)
+        super().__init__(parent, bg=COLORS['bg_dark'])
 
         # Store callbacks
         self._on_jog_left_press = on_jog_left_press
@@ -56,118 +60,193 @@ class ControlPanel(ttk.Frame):
         """Create and layout control widgets."""
         self.columnconfigure(0, weight=1)
 
-        # Jog Control Section
-        jog_frame = ttk.LabelFrame(self, text="Jog (hold button or arrow keys)", padding=5)
-        jog_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
-        jog_frame.columnconfigure(0, weight=1)
-        jog_frame.columnconfigure(1, weight=1)
+        # === Jog Control Section ===
+        jog_border = tk.Frame(self, bg=COLORS['border'])
+        jog_border.grid(row=0, column=0, sticky="ew", padx=8, pady=4)
+
+        jog_frame = tk.Frame(jog_border, bg=COLORS['bg_panel'], padx=12, pady=10)
+        jog_frame.pack(fill='both', padx=1, pady=1)
+
+        # Header
+        jog_header = tk.Label(
+            jog_frame,
+            text="JOG CONTROL",
+            font=FONTS['heading'],
+            fg=COLORS['text_accent'],
+            bg=COLORS['bg_panel']
+        )
+        jog_header.pack(anchor='w')
+
+        jog_hint = tk.Label(
+            jog_frame,
+            text="Hold button or use arrow keys",
+            font=FONTS['small'],
+            fg=COLORS['text_muted'],
+            bg=COLORS['bg_panel']
+        )
+        jog_hint.pack(anchor='w')
+
+        # Jog buttons row
+        jog_buttons = tk.Frame(jog_frame, bg=COLORS['bg_panel'])
+        jog_buttons.pack(fill='x', pady=(10, 0))
+        jog_buttons.columnconfigure(0, weight=1)
+        jog_buttons.columnconfigure(1, weight=1)
 
         # Jog Left Button
-        self._jog_left_btn = tk.Button(
-            jog_frame,
+        self._jog_left_btn = HoldButton(
+            jog_buttons,
             text="\u25C4 WELL",
-            font=("Arial", 11, "bold"),
-            bg="#2196F3",
-            fg="white",
-            activebackground="#1976D2",
-            activeforeground="white",
-            relief=tk.RAISED,
-            cursor="hand2"
+            on_press=self._on_jog_left_press,
+            on_release=self._on_jog_left_release,
+            width=180,
+            height=48,
+            bg_color=COLORS['btn_jog'],
+            hover_color=COLORS['btn_jog_hover'],
+            press_color=COLORS['btn_jog_press'],
+            font=FONTS['button_large'],
+            glow=True,
+            glow_color=COLORS['glow_blue']
         )
-        self._jog_left_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2), ipady=5)
-
-        self._jog_left_btn.bind("<ButtonPress-1>", self._on_jog_left_button_press)
-        self._jog_left_btn.bind("<ButtonRelease-1>", self._on_jog_left_button_release)
+        self._jog_left_btn.grid(row=0, column=0, sticky='ew', padx=(0, 6))
 
         # Jog Right Button
-        self._jog_right_btn = tk.Button(
-            jog_frame,
+        self._jog_right_btn = HoldButton(
+            jog_buttons,
             text="HOME \u25BA",
-            font=("Arial", 11, "bold"),
-            bg="#2196F3",
-            fg="white",
-            activebackground="#1976D2",
-            activeforeground="white",
-            relief=tk.RAISED,
-            cursor="hand2"
+            on_press=self._on_jog_right_press,
+            on_release=self._on_jog_right_release,
+            width=180,
+            height=48,
+            bg_color=COLORS['btn_jog'],
+            hover_color=COLORS['btn_jog_hover'],
+            press_color=COLORS['btn_jog_press'],
+            font=FONTS['button_large'],
+            glow=True,
+            glow_color=COLORS['glow_blue']
         )
-        self._jog_right_btn.grid(row=0, column=1, sticky="ew", padx=(2, 0), ipady=5)
+        self._jog_right_btn.grid(row=0, column=1, sticky='ew', padx=(6, 0))
 
-        self._jog_right_btn.bind("<ButtonPress-1>", self._on_jog_right_button_press)
-        self._jog_right_btn.bind("<ButtonRelease-1>", self._on_jog_right_button_release)
+        # === Position Control Section ===
+        pos_border = tk.Frame(self, bg=COLORS['border'])
+        pos_border.grid(row=1, column=0, sticky="ew", padx=8, pady=4)
 
-        # Position Control Section - more compact
-        pos_frame = ttk.LabelFrame(self, text="Position Control", padding=5)
-        pos_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=2)
-        pos_frame.columnconfigure(1, weight=1)
+        pos_frame = tk.Frame(pos_border, bg=COLORS['bg_panel'], padx=12, pady=10)
+        pos_frame.pack(fill='both', padx=1, pady=1)
 
-        # Row 0: GO HOME, GO WELL, STOP
-        self._go_home_btn = ttk.Button(pos_frame, text="GO HOME", command=self._on_go_home, width=10)
-        self._go_home_btn.grid(row=0, column=0, padx=2, pady=2)
-
-        self._go_well_btn = ttk.Button(pos_frame, text="GO WELL", command=self._on_go_well, width=10)
-        self._go_well_btn.grid(row=0, column=1, padx=2, pady=2, sticky="w")
-
-        self._stop_btn = tk.Button(
-            pos_frame, text="STOP", font=("Arial", 11, "bold"),
-            bg="#D32F2F", fg="white", activebackground="#B71C1C",
-            activeforeground="white", cursor="hand2", command=self._on_stop, width=10
+        # Header
+        pos_header = tk.Label(
+            pos_frame,
+            text="POSITION CONTROL",
+            font=FONTS['heading'],
+            fg=COLORS['text_accent'],
+            bg=COLORS['bg_panel']
         )
-        self._stop_btn.grid(row=0, column=2, padx=2, pady=2, sticky="e")
+        pos_header.pack(anchor='w')
 
-        # Row 1: Go To
-        ttk.Label(pos_frame, text="Go To:").grid(row=1, column=0, sticky="e", padx=2, pady=2)
-        goto_frame = ttk.Frame(pos_frame)
-        goto_frame.grid(row=1, column=1, columnspan=2, sticky="ew", padx=2, pady=2)
-        goto_frame.columnconfigure(0, weight=1)
+        # Button row: GO HOME, GO WELL, STOP
+        btn_row = tk.Frame(pos_frame, bg=COLORS['bg_panel'])
+        btn_row.pack(fill='x', pady=(10, 0))
 
-        self._goto_entry = ttk.Entry(goto_frame, width=12)
-        self._goto_entry.grid(row=0, column=0, sticky="ew")
+        self._go_home_btn = ModernButton(
+            btn_row,
+            text="GO HOME",
+            command=self._on_go_home,
+            width=100,
+            height=36,
+            bg_color=COLORS['btn_primary'],
+            font=FONTS['button']
+        )
+        self._go_home_btn.pack(side='left', padx=(0, 8))
+
+        self._go_well_btn = ModernButton(
+            btn_row,
+            text="GO WELL",
+            command=self._on_go_well,
+            width=100,
+            height=36,
+            bg_color=COLORS['btn_primary'],
+            font=FONTS['button']
+        )
+        self._go_well_btn.pack(side='left', padx=(0, 8))
+
+        # Spacer
+        spacer = tk.Frame(btn_row, bg=COLORS['bg_panel'])
+        spacer.pack(side='left', fill='x', expand=True)
+
+        # STOP button
+        self._stop_btn = ModernButton(
+            btn_row,
+            text="STOP",
+            command=self._on_stop,
+            width=100,
+            height=36,
+            bg_color=COLORS['btn_danger'],
+            hover_color=COLORS['btn_danger_hover'],
+            font=FONTS['button'],
+            glow=True,
+            glow_color=COLORS['glow_red']
+        )
+        self._stop_btn.pack(side='right')
+
+        # Input row: Go To
+        goto_row = tk.Frame(pos_frame, bg=COLORS['bg_panel'])
+        goto_row.pack(fill='x', pady=(12, 0))
+
+        goto_label = tk.Label(
+            goto_row,
+            text="Go To:",
+            font=FONTS['body'],
+            fg=COLORS['text_secondary'],
+            bg=COLORS['bg_panel'],
+            width=8,
+            anchor='e'
+        )
+        goto_label.pack(side='left')
+
+        self._goto_entry = ModernEntry(goto_row, width=14)
+        self._goto_entry.pack(side='left', padx=(8, 0))
         self._goto_entry.bind("<Return>", lambda e: self._execute_goto())
 
-        self._goto_btn = ttk.Button(goto_frame, text="GO", command=self._execute_goto, width=5)
-        self._goto_btn.grid(row=0, column=1, padx=(3, 0))
+        self._goto_btn = ModernButton(
+            goto_row,
+            text="GO",
+            command=self._execute_goto,
+            width=60,
+            height=30,
+            bg_color=COLORS['btn_secondary'],
+            font=FONTS['body']
+        )
+        self._goto_btn.pack(side='left', padx=(8, 0))
 
-        # Row 2: Move Relative
-        ttk.Label(pos_frame, text="Move Rel:").grid(row=2, column=0, sticky="e", padx=2, pady=2)
-        rel_frame = ttk.Frame(pos_frame)
-        rel_frame.grid(row=2, column=1, columnspan=2, sticky="ew", padx=2, pady=2)
-        rel_frame.columnconfigure(0, weight=1)
+        # Input row: Move Relative
+        rel_row = tk.Frame(pos_frame, bg=COLORS['bg_panel'])
+        rel_row.pack(fill='x', pady=(8, 0))
 
-        self._rel_entry = ttk.Entry(rel_frame, width=12)
-        self._rel_entry.grid(row=0, column=0, sticky="ew")
+        rel_label = tk.Label(
+            rel_row,
+            text="Move Rel:",
+            font=FONTS['body'],
+            fg=COLORS['text_secondary'],
+            bg=COLORS['bg_panel'],
+            width=8,
+            anchor='e'
+        )
+        rel_label.pack(side='left')
+
+        self._rel_entry = ModernEntry(rel_row, width=14)
+        self._rel_entry.pack(side='left', padx=(8, 0))
         self._rel_entry.bind("<Return>", lambda e: self._execute_relative())
 
-        self._rel_btn = ttk.Button(rel_frame, text="MOVE", command=self._execute_relative, width=5)
-        self._rel_btn.grid(row=0, column=1, padx=(3, 0))
-
-    def _on_jog_left_button_press(self, event: tk.Event) -> None:
-        """Handle jog left button press."""
-        if not self._jog_left_active:
-            self._jog_left_active = True
-            self._jog_left_btn.configure(relief=tk.SUNKEN, bg="#1565C0")
-            self._on_jog_left_press()
-
-    def _on_jog_left_button_release(self, event: tk.Event) -> None:
-        """Handle jog left button release."""
-        if self._jog_left_active:
-            self._jog_left_active = False
-            self._jog_left_btn.configure(relief=tk.RAISED, bg="#2196F3")
-            self._on_jog_left_release()
-
-    def _on_jog_right_button_press(self, event: tk.Event) -> None:
-        """Handle jog right button press."""
-        if not self._jog_right_active:
-            self._jog_right_active = True
-            self._jog_right_btn.configure(relief=tk.SUNKEN, bg="#1565C0")
-            self._on_jog_right_press()
-
-    def _on_jog_right_button_release(self, event: tk.Event) -> None:
-        """Handle jog right button release."""
-        if self._jog_right_active:
-            self._jog_right_active = False
-            self._jog_right_btn.configure(relief=tk.RAISED, bg="#2196F3")
-            self._on_jog_right_release()
+        self._rel_btn = ModernButton(
+            rel_row,
+            text="MOVE",
+            command=self._execute_relative,
+            width=60,
+            height=30,
+            bg_color=COLORS['btn_secondary'],
+            font=FONTS['body']
+        )
+        self._rel_btn.pack(side='left', padx=(8, 0))
 
     def _execute_goto(self) -> None:
         """Execute go-to command from entry field."""
@@ -193,54 +272,34 @@ class ControlPanel(ttk.Frame):
 
     def set_enabled(self, enabled: bool) -> None:
         """Enable or disable all controls."""
-        state = tk.NORMAL if enabled else tk.DISABLED
-
-        self._jog_left_btn.configure(state=state)
-        self._jog_right_btn.configure(state=state)
-        self._go_home_btn.configure(state=state)
-        self._go_well_btn.configure(state=state)
-        self._stop_btn.configure(state=state)
-        self._goto_btn.configure(state=state)
-        self._rel_btn.configure(state=state)
-        self._goto_entry.configure(state=state)
-        self._rel_entry.configure(state=state)
-
-        if not enabled:
-            # Reset visual states
-            self._jog_left_btn.configure(relief=tk.RAISED, bg="#9E9E9E")
-            self._jog_right_btn.configure(relief=tk.RAISED, bg="#9E9E9E")
-            self._stop_btn.configure(bg="#9E9E9E")
-        else:
-            self._jog_left_btn.configure(bg="#2196F3")
-            self._jog_right_btn.configure(bg="#2196F3")
-            self._stop_btn.configure(bg="#D32F2F")
+        self._jog_left_btn.set_enabled(enabled)
+        self._jog_right_btn.set_enabled(enabled)
+        self._go_home_btn.set_enabled(enabled)
+        self._go_well_btn.set_enabled(enabled)
+        self._stop_btn.set_enabled(enabled)
+        self._goto_btn.set_enabled(enabled)
+        self._rel_btn.set_enabled(enabled)
+        self._goto_entry.set_enabled(enabled)
+        self._rel_entry.set_enabled(enabled)
 
     def set_home_enabled(self, enabled: bool) -> None:
         """Enable or disable Go Home button based on home saved state."""
-        self._go_home_btn.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        self._go_home_btn.set_enabled(enabled)
 
     def set_well_enabled(self, enabled: bool) -> None:
         """Enable or disable Go Well button based on well saved state."""
-        self._go_well_btn.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        self._go_well_btn.set_enabled(enabled)
 
     def trigger_jog_left(self, pressed: bool) -> None:
         """Trigger jog left from keyboard."""
-        if pressed and not self._jog_left_active:
-            self._jog_left_active = True
-            self._jog_left_btn.configure(relief=tk.SUNKEN, bg="#1565C0")
-            self._on_jog_left_press()
-        elif not pressed and self._jog_left_active:
-            self._jog_left_active = False
-            self._jog_left_btn.configure(relief=tk.RAISED, bg="#2196F3")
-            self._on_jog_left_release()
+        if pressed:
+            self._jog_left_btn.trigger_press()
+        else:
+            self._jog_left_btn.trigger_release()
 
     def trigger_jog_right(self, pressed: bool) -> None:
         """Trigger jog right from keyboard."""
-        if pressed and not self._jog_right_active:
-            self._jog_right_active = True
-            self._jog_right_btn.configure(relief=tk.SUNKEN, bg="#1565C0")
-            self._on_jog_right_press()
-        elif not pressed and self._jog_right_active:
-            self._jog_right_active = False
-            self._jog_right_btn.configure(relief=tk.RAISED, bg="#2196F3")
-            self._on_jog_right_release()
+        if pressed:
+            self._jog_right_btn.trigger_press()
+        else:
+            self._jog_right_btn.trigger_release()

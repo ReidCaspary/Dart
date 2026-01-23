@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 from .gui.main_window import MainWindow
+from .gui.theme import configure_modern_theme
 
 
 def check_dependencies() -> bool:
@@ -60,6 +61,9 @@ def main() -> int:
             windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
             pass  # Not on Windows or API not available
+
+        # Apply modern dark theme
+        configure_modern_theme(root)
 
         app = MainWindow(root)
         app.run()

@@ -2,14 +2,18 @@
 Settings Panel
 
 Contains position save buttons and saved position displays.
+Modern dark theme styling.
 """
 
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Optional
 
+from .theme import COLORS, FONTS
+from .widgets import ModernButton
 
-class SettingsPanel(ttk.Frame):
+
+class SettingsPanel(tk.Frame):
     """
     Settings panel for saving and displaying home/well positions.
 
@@ -26,7 +30,7 @@ class SettingsPanel(ttk.Frame):
         on_save_well: Callable[[], None],
         on_zero_position: Callable[[], None]
     ):
-        super().__init__(parent)
+        super().__init__(parent, bg=COLORS['bg_dark'])
 
         self._on_save_home = on_save_home
         self._on_save_well = on_save_well
@@ -38,65 +42,131 @@ class SettingsPanel(ttk.Frame):
         """Create and layout settings widgets."""
         self.columnconfigure(0, weight=1)
 
-        # Main settings frame - compact single row layout
-        settings_frame = ttk.LabelFrame(self, text="Saved Positions", padding=5)
-        settings_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
-        settings_frame.columnconfigure(1, weight=1)
-        settings_frame.columnconfigure(4, weight=1)
+        # Panel border
+        panel_border = tk.Frame(self, bg=COLORS['border'])
+        panel_border.grid(row=0, column=0, sticky="ew", padx=8, pady=4)
 
-        # Home: label, value, save button
-        ttk.Label(settings_frame, text="Home:", font=("Arial", 9, "bold")).grid(row=0, column=0, padx=2)
+        panel_frame = tk.Frame(panel_border, bg=COLORS['bg_panel'], padx=12, pady=10)
+        panel_frame.pack(fill='both', padx=1, pady=1)
+
+        # Header
+        header = tk.Label(
+            panel_frame,
+            text="SAVED POSITIONS",
+            font=FONTS['heading'],
+            fg=COLORS['text_accent'],
+            bg=COLORS['bg_panel']
+        )
+        header.pack(anchor='w')
+
+        # Content row
+        content_row = tk.Frame(panel_frame, bg=COLORS['bg_panel'])
+        content_row.pack(fill='x', pady=(8, 0))
+
+        # Home section
+        home_label = tk.Label(
+            content_row,
+            text="Home:",
+            font=FONTS['subheading'],
+            fg=COLORS['text_primary'],
+            bg=COLORS['bg_panel']
+        )
+        home_label.pack(side='left')
+
         self._home_pos_var = tk.StringVar(value="Not Set")
-        self._home_pos_label = ttk.Label(settings_frame, textvariable=self._home_pos_var, font=("Consolas", 9), foreground="gray", width=12)
-        self._home_pos_label.grid(row=0, column=1, sticky="w", padx=2)
-        self._save_home_btn = ttk.Button(settings_frame, text="SAVE", command=self._on_save_home, width=6)
-        self._save_home_btn.grid(row=0, column=2, padx=2)
+        self._home_pos_label = tk.Label(
+            content_row,
+            textvariable=self._home_pos_var,
+            font=FONTS['mono'],
+            fg=COLORS['text_muted'],
+            bg=COLORS['bg_panel'],
+            width=12,
+            anchor='w'
+        )
+        self._home_pos_label.pack(side='left', padx=(4, 0))
 
-        # Well: label, value, save button
-        ttk.Label(settings_frame, text="Well:", font=("Arial", 9, "bold")).grid(row=0, column=3, padx=(10, 2))
+        self._save_home_btn = ModernButton(
+            content_row,
+            text="SAVE",
+            command=self._on_save_home,
+            width=55,
+            height=26,
+            bg_color=COLORS['btn_secondary'],
+            font=FONTS['small']
+        )
+        self._save_home_btn.pack(side='left', padx=(8, 0))
+
+        # Spacer
+        tk.Frame(content_row, bg=COLORS['bg_panel'], width=24).pack(side='left')
+
+        # Well section
+        well_label = tk.Label(
+            content_row,
+            text="Well:",
+            font=FONTS['subheading'],
+            fg=COLORS['text_primary'],
+            bg=COLORS['bg_panel']
+        )
+        well_label.pack(side='left')
+
         self._well_pos_var = tk.StringVar(value="Not Set")
-        self._well_pos_label = ttk.Label(settings_frame, textvariable=self._well_pos_var, font=("Consolas", 9), foreground="gray", width=12)
-        self._well_pos_label.grid(row=0, column=4, sticky="w", padx=2)
-        self._save_well_btn = ttk.Button(settings_frame, text="SAVE", command=self._on_save_well, width=6)
-        self._save_well_btn.grid(row=0, column=5, padx=2)
+        self._well_pos_label = tk.Label(
+            content_row,
+            textvariable=self._well_pos_var,
+            font=FONTS['mono'],
+            fg=COLORS['text_muted'],
+            bg=COLORS['bg_panel'],
+            width=12,
+            anchor='w'
+        )
+        self._well_pos_label.pack(side='left', padx=(4, 0))
+
+        self._save_well_btn = ModernButton(
+            content_row,
+            text="SAVE",
+            command=self._on_save_well,
+            width=55,
+            height=26,
+            bg_color=COLORS['btn_secondary'],
+            font=FONTS['small']
+        )
+        self._save_well_btn.pack(side='left', padx=(8, 0))
+
+        # Spacer
+        tk.Frame(content_row, bg=COLORS['bg_panel'], width=24).pack(side='left')
 
         # Zero button
-        self._zero_btn = ttk.Button(settings_frame, text="ZERO", command=self._on_zero_position, width=6)
-        self._zero_btn.grid(row=0, column=6, padx=(10, 2))
+        self._zero_btn = ModernButton(
+            content_row,
+            text="ZERO",
+            command=self._on_zero_position,
+            width=55,
+            height=26,
+            bg_color=COLORS['btn_secondary'],
+            font=FONTS['small']
+        )
+        self._zero_btn.pack(side='left')
 
     def update_home_position(self, saved: bool, position: Optional[int]) -> None:
-        """
-        Update home position display.
-
-        Args:
-            saved: Whether home position is saved
-            position: Home position in steps (or None)
-        """
+        """Update home position display."""
         if saved and position is not None:
             self._home_pos_var.set(f"{position:,} steps")
-            self._home_pos_label.configure(foreground="black")
+            self._home_pos_label.configure(fg=COLORS['text_primary'])
         else:
             self._home_pos_var.set("Not Set")
-            self._home_pos_label.configure(foreground="gray")
+            self._home_pos_label.configure(fg=COLORS['text_muted'])
 
     def update_well_position(self, saved: bool, position: Optional[int]) -> None:
-        """
-        Update well position display.
-
-        Args:
-            saved: Whether well position is saved
-            position: Well position in steps (or None)
-        """
+        """Update well position display."""
         if saved and position is not None:
             self._well_pos_var.set(f"{position:,} steps")
-            self._well_pos_label.configure(foreground="black")
+            self._well_pos_label.configure(fg=COLORS['text_primary'])
         else:
             self._well_pos_var.set("Not Set")
-            self._well_pos_label.configure(foreground="gray")
+            self._well_pos_label.configure(fg=COLORS['text_muted'])
 
     def set_enabled(self, enabled: bool) -> None:
         """Enable or disable all controls."""
-        state = "normal" if enabled else "disabled"
-        self._save_home_btn.configure(state=state)
-        self._save_well_btn.configure(state=state)
-        self._zero_btn.configure(state=state)
+        self._save_home_btn.set_enabled(enabled)
+        self._save_well_btn.set_enabled(enabled)
+        self._zero_btn.set_enabled(enabled)

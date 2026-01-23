@@ -20,6 +20,9 @@ from .settings_panel import SettingsPanel
 from .status_bar import StatusBar
 from .settings_dialog import SettingsDialog
 from .drop_cylinder_panel import DropCylinderPanel
+from .camera_panel import CameraPanel
+from .theme import COLORS, FONTS
+from .widgets import ModernButton
 
 
 class MainWindow:
@@ -37,8 +40,8 @@ class MainWindow:
     """
 
     WINDOW_TITLE = "Winch Control"
-    WINDOW_MIN_WIDTH = 500
-    WINDOW_MIN_HEIGHT = 480
+    WINDOW_MIN_WIDTH = 900
+    WINDOW_MIN_HEIGHT = 750
 
     # Default baud rates
     BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400]
@@ -76,13 +79,20 @@ class MainWindow:
 
     def _create_widgets(self) -> None:
         """Create all GUI widgets."""
-        # Connection Bar
+        # Configure grid for two-column layout
+        self._root.columnconfigure(0, weight=0)  # Left column (controls) - fixed
+        self._root.columnconfigure(1, weight=1)  # Right column (cameras) - expandable
+        self._root.rowconfigure(5, weight=1)     # Let the camera row expand
+
+        # Connection Bar (spans all columns)
         self._create_connection_bar()
 
-        # Separator
+        # Separator (spans both columns)
         ttk.Separator(self._root, orient=tk.HORIZONTAL).grid(
-            row=1, column=0, sticky="ew", pady=2
+            row=1, column=0, columnspan=2, sticky="ew", pady=2
         )
+
+        # === LEFT COLUMN (Controls) ===
 
         # Position Display
         self._position_display = PositionDisplay(self._root)
@@ -133,19 +143,41 @@ class MainWindow:
             on_configure_wifi=self._on_drop_configure_wifi,
             on_test=self._on_drop_test
         )
-        self._drop_cylinder_panel.grid(row=5, column=0, sticky="ew", padx=5, pady=2)
+        self._drop_cylinder_panel.grid(row=5, column=0, sticky="new", padx=5, pady=2)
+
+        # === RIGHT COLUMN (Cameras in container) ===
+
+        # Container frame for cameras (anchored top-left, no stretching)
+        camera_container = tk.Frame(self._root, bg=COLORS['bg_dark'])
+        camera_container.grid(row=2, column=1, rowspan=4, sticky="nw", padx=5, pady=2)
+
+        # Camera Panel 1 (fixed size, no expand)
+        self._camera_panel = CameraPanel(camera_container)
+        self._camera_panel.pack(side='left', padx=(0, 2))
+
+        # Camera Panel 2 (fixed size, no expand)
+        self._camera_panel_2 = CameraPanel(camera_container)
+        self._camera_panel_2.pack(side='left', padx=(2, 0))
+
+        # === BOTTOM ROW (Status Bar spans both columns) ===
 
         # Status Bar
         self._status_bar = StatusBar(self._root)
-        self._status_bar.grid(row=6, column=0, sticky="ew", padx=5, pady=2)
+        self._status_bar.grid(row=6, column=0, columnspan=2, sticky="ew", padx=5, pady=2)
 
     def _create_connection_bar(self) -> None:
         """Create the connection controls bar."""
-        conn_frame = ttk.Frame(self._root)
-        conn_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        # Outer container with border (spans both columns)
+        conn_outer = tk.Frame(self._root, bg=COLORS['border'], padx=1, pady=1)
+        conn_outer.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=8)
+
+        conn_frame = tk.Frame(conn_outer, bg=COLORS['bg_header'], padx=12, pady=8)
+        conn_frame.pack(fill='x')
 
         # Port selection
-        ttk.Label(conn_frame, text="Port:").pack(side=tk.LEFT, padx=(0, 3))
+        port_label = tk.Label(conn_frame, text="Port:", font=FONTS['body'],
+                              bg=COLORS['bg_header'], fg=COLORS['text_secondary'])
+        port_label.pack(side=tk.LEFT, padx=(0, 6))
 
         self._port_var = tk.StringVar()
         self._port_combo = ttk.Combobox(
@@ -154,19 +186,24 @@ class MainWindow:
             width=12,
             state="readonly"
         )
-        self._port_combo.pack(side=tk.LEFT, padx=(0, 3))
+        self._port_combo.pack(side=tk.LEFT, padx=(0, 6))
 
         # Refresh ports button
-        self._refresh_btn = ttk.Button(
+        self._refresh_btn = ModernButton(
             conn_frame,
             text="\u21BB",
-            width=2,
-            command=self._refresh_ports
+            command=self._refresh_ports,
+            width=32,
+            height=28,
+            bg_color=COLORS['btn_secondary'],
+            font=FONTS['body']
         )
-        self._refresh_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self._refresh_btn.pack(side=tk.LEFT, padx=(0, 16))
 
         # Baud rate selection
-        ttk.Label(conn_frame, text="Baud:").pack(side=tk.LEFT, padx=(0, 3))
+        baud_label = tk.Label(conn_frame, text="Baud:", font=FONTS['body'],
+                              bg=COLORS['bg_header'], fg=COLORS['text_secondary'])
+        baud_label.pack(side=tk.LEFT, padx=(0, 6))
 
         self._baud_var = tk.StringVar(value=str(self.DEFAULT_BAUD))
         self._baud_combo = ttk.Combobox(
@@ -176,25 +213,32 @@ class MainWindow:
             width=8,
             state="readonly"
         )
-        self._baud_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self._baud_combo.pack(side=tk.LEFT, padx=(0, 12))
 
         # Connect/Disconnect button
-        self._connect_btn = ttk.Button(
+        self._connect_btn = ModernButton(
             conn_frame,
             text="Connect",
             command=self._toggle_connection,
-            width=10
+            width=100,
+            height=32,
+            bg_color=COLORS['btn_primary'],
+            glow=True,
+            font=FONTS['button']
         )
         self._connect_btn.pack(side=tk.LEFT)
 
         # Settings button
-        self._settings_btn = ttk.Button(
+        self._settings_btn = ModernButton(
             conn_frame,
-            text="\u2699",  # Gear icon
+            text="\u2699",
             command=self._open_settings,
-            width=3
+            width=36,
+            height=32,
+            bg_color=COLORS['btn_secondary'],
+            font=FONTS['button']
         )
-        self._settings_btn.pack(side=tk.LEFT, padx=(10, 0))
+        self._settings_btn.pack(side=tk.LEFT, padx=(16, 0))
 
     def _setup_callbacks(self) -> None:
         """Setup serial and WiFi manager callbacks."""
@@ -280,10 +324,13 @@ class MainWindow:
             self._control_panel.set_home_enabled(False)
             self._control_panel.set_well_enabled(False)
 
-        # Update connection button text
-        self._connect_btn.configure(
-            text="Disconnect" if connected else "Connect"
-        )
+        # Update connection button text and color
+        if connected:
+            self._connect_btn.set_text("Disconnect")
+            self._connect_btn.configure_colors(bg_color=COLORS['btn_danger'])
+        else:
+            self._connect_btn.set_text("Connect")
+            self._connect_btn.configure_colors(bg_color=COLORS['btn_primary'])
 
         # Disable port selection when connected
         port_state = "disabled" if connected else "readonly"
