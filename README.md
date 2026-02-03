@@ -26,13 +26,27 @@ Industrial dart/ball delivery system for fracking wellhead operations. This syst
                               └─────────────────┘
 ```
 
+### Network Architecture
+
+```
+                         Starlink Router
+                    ┌────────────────────────┐
+                    │   SSID: Sharewell Wifi │
+                    └───────────┬────────────┘
+                                │
+        ┌───────────┬───────────┼───────────┬───────────┐
+        │           │           │           │           │
+     Laptop      STAC5       ESP32        Cam1        Cam2
+    (run.py)   (Ethernet)  (dart cyl)   (WiFi)      (WiFi)
+```
+
 ### Physical Components
 
 | Component | Description | Controller |
 |-----------|-------------|------------|
 | **Drop Cylinder** | Pressurized cylinder containing darts/balls to be delivered | ESP32 + Servo Winch |
 | **Pulley System** | Horizontal conveyance system for positioning drop cylinder | Arduino + Stepper |
-| **Winch** | Raises/lowers the drop cylinder assembly to the wellhead | Arduino + Stepper |
+| **Winch** | Raises/lowers the drop cylinder assembly to the wellhead | STAC5 IP-120E (Ethernet) |
 | **Camera System** | Two ESP32-CAMs mounted on drop cylinder for monitoring | ESP32-CAM modules |
 
 ### Software Control
@@ -72,9 +86,11 @@ Upload firmware to each controller using Arduino IDE:
 
 | Controller | Firmware Location | Board Setting |
 |------------|-------------------|---------------|
-| Main Winch | `winch-control/arduino/winch_controller/` | Arduino Uno R4 |
-| Drop Cylinder | `winch-control/arduino/drop_cylinder/` | Arduino Nano ESP32 |
-| Cameras | `winch-control/arduino/Camera/` | AI Thinker ESP32-CAM |
+| Drop Cylinder | `arduino/drop_cylinder/` | Arduino Nano ESP32 |
+| Camera 1 | `arduino/Camera1/` | AI Thinker ESP32-CAM |
+| Camera 2 | `arduino/Camera2/` | AI Thinker ESP32-CAM |
+
+**Note:** The STAC5 motor controller is configured via its Ethernet interface - no firmware upload needed.
 
 ### Running the Application
 
@@ -84,25 +100,28 @@ python run.py
 
 ## Hardware Configuration
 
-### Main Winch (Arduino Uno R4)
+### Main Winch (STAC5 IP-120E)
 
-Controls the NEMA 32 stepper motor through a STAC5 IP-120E stepper drive.
+The STAC5 IP-120E stepper drive connects directly to the Starlink router via Ethernet. The laptop communicates with it using the SCL (Serial Command Language) protocol.
 
-**Connections:**
+**Network Configuration:**
 ```
-Arduino Pin    STAC5 Drive     Function
-───────────    ───────────     ────────
-Pin 8          STEP+           Step pulse (4000 steps/rev)
-Pin 9          DIR+            Direction control
-Pin 10         ENABLE+         Motor enable (active LOW)
-GND            STEP-/DIR-/EN-  Common ground
-
-Pin 2          Button → GND    Jog Left
-Pin 3          Button → GND    Jog Right
-Pin 4          Button → GND    Go Well
-Pin 5          Button → GND    Go Home
-Pin 6          Switch → GND    E-Stop (active HIGH)
+Connection:    Ethernet to Starlink Router
+IP Address:    192.168.1.40
+Port:          7776
+Protocol:      SCL (Applied Motion Products)
 ```
+
+**SCL Commands:**
+| Command | Description |
+|---------|-------------|
+| `CJ` | Commence jogging |
+| `SJ` | Stop jogging |
+| `DI` | Set distance (steps) |
+| `VE` | Set velocity (rev/sec) |
+| `FL` | Feed to length (execute move) |
+
+See `Host-Command/Host-Command.md` for complete protocol documentation.
 
 ### Drop Cylinder (ESP32 Nano)
 
@@ -118,13 +137,20 @@ GND            Servo GND       Common ground
 ```
 
 **Communication:**
-- WiFi AP Mode: SSID `DropCylinder`, Password `dropcyl123`
+- WiFi: Connects to Starlink (SSID: `Sharewell Wifi`, Password: `sharewell`)
+- Static IP: 192.168.1.10
 - TCP Server: Port 8080
-- Also supports USB serial connection
+- Fallback AP Mode: SSID `DartCylinder`, Password `dartcyl123`
 
 ### Camera System (ESP32-CAM)
 
-Two cameras mounted on the drop cylinder assembly.
+Two cameras mounted on the drop cylinder assembly. Both connect to Starlink WiFi.
+
+**WiFi:** SSID `Sharewell Wifi`, Password `sharewell`
+
+**IP Addresses:**
+- Camera 1: 192.168.1.20
+- Camera 2: 192.168.1.21
 
 **Streams:**
 - Video: `http://<camera-ip>:81/stream` (MJPEG)
@@ -300,12 +326,11 @@ Dart/
 
 | Issue | Solution |
 |-------|----------|
-| Port not listed | Click refresh, check USB connection |
-| Connection fails | Close Arduino Serial Monitor |
-| Motor doesn't move | Check ENABLE pin logic, verify wiring |
-| Wrong direction | Swap DIR pin HIGH/LOW in firmware |
-| Drop cylinder no WiFi | Check AP mode: "DropCylinder" / "dropcyl123" |
-| Camera not streaming | Verify IP address, check port 81 |
+| STAC5 not responding | Check Ethernet connection to Starlink, verify IP 192.168.1.40 |
+| ESP32 not connecting | Check WiFi credentials (Sharewell Wifi / sharewell) |
+| Motor doesn't move | Check STAC5 configuration, verify SCL commands |
+| Drop cylinder no WiFi | Check fallback AP mode: "DartCylinder" / "dartcyl123" |
+| Camera not streaming | Verify IP address (192.168.1.20/21), check port 81 |
 
 ## Running Tests
 

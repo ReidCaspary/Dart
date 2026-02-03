@@ -5,12 +5,9 @@
 // ================================
 // CAMERA 1 - Static IP: 192.168.4.20
 // ================================
-// Office network (for testing)
-const char* ssid = "hddwlan";
-const char* password = "drillerdriller1";
-// Field network (uncomment for deployment)
-// const char* ssid = "STARLINK";
-// const char* password = "SharewellHDD*";
+// Starlink WiFi credentials
+const char* ssid = "Sharewell Wifi";
+const char* password = "sharewell";
 
 // Static IP configuration (update gateway to match your network)
 IPAddress staticIP(172, 168, 168, 20);

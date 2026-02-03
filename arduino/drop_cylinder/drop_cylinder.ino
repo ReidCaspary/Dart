@@ -50,12 +50,9 @@ float jogSpeed = 0.5f;             // 50% speed for jogging
 // WiFi Configuration
 // ============================================================================
 
-// Office network (for testing)
-const char* DEFAULT_SSID = "hddwlan";
-const char* DEFAULT_PASS = "drillerdriller1";
-// Field network (uncomment for deployment)
-// const char* DEFAULT_SSID = "STARLINK";
-// const char* DEFAULT_PASS = "SharewellHDD*";
+// Starlink WiFi credentials
+const char* DEFAULT_SSID = "Sharewell Wifi";
+const char* DEFAULT_PASS = "sharewell";
 
 // Static IP configuration (update gateway to match your network)
 IPAddress staticIP(172, 168, 168, 10);

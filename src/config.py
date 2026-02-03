@@ -9,7 +9,24 @@ from typing import List, Tuple
 
 
 # =============================================================================
-# SERIAL COMMUNICATION
+# PULLEY SYSTEM (Raspberry Pi -> STAC5)
+# =============================================================================
+
+# Raspberry Pi pulley controller IP address
+# Office network (testing)
+PULLEY_PI_HOST: str = "172.168.168.32"
+# Field network (uncomment for deployment)
+# PULLEY_PI_HOST: str = "192.168.1.10"
+
+# Raspberry Pi pulley controller TCP port
+PULLEY_PI_PORT: int = 8081
+
+# Pulley status poll interval in seconds
+PULLEY_POLL_INTERVAL_SEC: float = 0.15  # 150ms
+
+
+# =============================================================================
+# SERIAL COMMUNICATION (Legacy - kept for reference)
 # =============================================================================
 
 # Available baud rates for serial connections
@@ -29,7 +46,7 @@ SERIAL_WRITE_TIMEOUT: float = 0.1
 # STATUS POLLING
 # =============================================================================
 
-# Winch controller status poll interval in seconds
+# Winch controller status poll interval in seconds (legacy)
 WINCH_POLL_INTERVAL_SEC: float = 0.15  # 150ms
 
 # Drop cylinder status poll interval in seconds
@@ -60,6 +77,12 @@ DECELERATION_RPS2: float = 8.5
 # DROP CYLINDER CONFIGURATION
 # =============================================================================
 
+# Drop cylinder (ESP32 Nano) IP address
+# Office network (testing)
+DROP_CYLINDER_HOST: str = "172.168.168.10"
+# Field network (uncomment for deployment)
+# DROP_CYLINDER_HOST: str = "192.168.1.11"
+
 # Default TCP port for drop cylinder WiFi connection
 DROP_CYLINDER_TCP_PORT: int = 8080
 
@@ -84,6 +107,14 @@ TRIM_MAX_US: int = 50
 # =============================================================================
 # CAMERA CONFIGURATION
 # =============================================================================
+
+# Camera IP addresses
+# Office network (testing)
+CAMERA_1_HOST: str = "172.168.168.20"
+CAMERA_2_HOST: str = "172.168.168.21"
+# Field network (uncomment for deployment)
+# CAMERA_1_HOST: str = "192.168.1.20"
+# CAMERA_2_HOST: str = "192.168.1.21"
 
 # Camera MJPEG stream port
 CAMERA_STREAM_PORT: int = 81

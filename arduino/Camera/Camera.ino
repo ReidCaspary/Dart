@@ -5,8 +5,8 @@
 // ================================
 // ENTER YOUR WIFI CREDENTIALS HERE
 // ================================
-const char* ssid = "hddwlan";
-const char* password = "drillerdriller1";
+const char* ssid = "Sharewell Wifi";
+const char* password = "sharewell";
 
 // ================================
 // AI-Thinker ESP32-CAM Pin Definitions
