@@ -50,15 +50,33 @@ float jogSpeed = 0.5f;             // 50% speed for jogging
 // WiFi Configuration
 // ============================================================================
 
-// AP mode settings (for configuration/discovery)
-const char* AP_SSID = "DropCylinder";
-const char* AP_PASS = "dropcyl123";  // Min 8 chars
+// Office network (for testing)
+const char* DEFAULT_SSID = "hddwlan";
+const char* DEFAULT_PASS = "drillerdriller1";
+// Field network (uncomment for deployment)
+// const char* DEFAULT_SSID = "STARLINK";
+// const char* DEFAULT_PASS = "SharewellHDD*";
+
+// Static IP configuration (update gateway to match your network)
+IPAddress staticIP(172, 168, 168, 10);
+IPAddress gateway(172, 168, 168, 1);
+IPAddress subnet(255, 255, 255, 0);
+IPAddress dns(172, 168, 168, 1);
+
+// AP mode settings (fallback for configuration/discovery)
+const char* AP_SSID = "DartCylinder";
+const char* AP_PASS = "dartcyl123";  // Min 8 chars
 
 // Station mode settings (stored in preferences)
 Preferences preferences;
 String staSsid = "";
 String staPass = "";
 bool stationMode = false;
+
+// WiFi reconnection
+unsigned long lastWifiCheck = 0;
+const unsigned long WIFI_CHECK_INTERVAL = 5000;  // Check every 5 seconds
+bool wasConnected = false;
 
 // TCP Server
 WiFiServer server(8080);
@@ -132,39 +150,41 @@ void setup() {
 
   // Load saved WiFi credentials
   preferences.begin("dropcyl", false);
-  staSsid = preferences.getString("ssid", "");
-  staPass = preferences.getString("pass", "");
+  staSsid = preferences.getString("ssid", DEFAULT_SSID);
+  staPass = preferences.getString("pass", DEFAULT_PASS);
   trimOffsetUs = preferences.getInt("trim", 0);
   startPositionMs = preferences.getInt("startPos", 0);
   stopPositionMs = preferences.getInt("stopPos", 5000);
   startSaved = preferences.getBool("startSaved", false);
   stopSaved = preferences.getBool("stopSaved", false);
 
-  // Try to connect to saved network, otherwise start AP
-  if (staSsid.length() > 0) {
-    Serial.print("Connecting to WiFi: ");
-    Serial.println(staSsid);
+  // Configure static IP
+  if (!WiFi.config(staticIP, gateway, subnet, dns)) {
+    Serial.println("Static IP configuration failed!");
+  }
 
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(staSsid.c_str(), staPass.c_str());
+  // Try to connect to network (default or saved)
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(staSsid);
 
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-      delay(500);
-      Serial.print(".");
-      attempts++;
-    }
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(staSsid.c_str(), staPass.c_str());
 
-    if (WiFi.status() == WL_CONNECTED) {
-      stationMode = true;
-      Serial.println("\nConnected!");
-      Serial.print("IP Address: ");
-      Serial.println(WiFi.localIP());
-    } else {
-      Serial.println("\nFailed to connect, starting AP mode");
-      startAPMode();
-    }
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    stationMode = true;
+    wasConnected = true;
+    Serial.println("\nConnected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
   } else {
+    Serial.println("\nFailed to connect, starting AP mode");
     startAPMode();
   }
 
@@ -184,10 +204,53 @@ void startAPMode() {
 }
 
 // ============================================================================
+// WiFi Reconnection
+// ============================================================================
+
+void checkWiFiConnection() {
+  if (!stationMode) return;  // Don't check if in AP mode
+
+  if (WiFi.status() != WL_CONNECTED) {
+    if (wasConnected) {
+      Serial.println("WiFi connection lost! Reconnecting...");
+      wasConnected = false;
+    }
+
+    // Configure static IP again
+    WiFi.config(staticIP, gateway, subnet, dns);
+    WiFi.begin(staSsid.c_str(), staPass.c_str());
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 10) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      wasConnected = true;
+      Serial.println("\nReconnected to WiFi!");
+      Serial.print("IP Address: ");
+      Serial.println(WiFi.localIP());
+    }
+  } else if (!wasConnected) {
+    wasConnected = true;
+  }
+}
+
+// ============================================================================
 // Main Loop
 // ============================================================================
 
 void loop() {
+  unsigned long now = millis();
+
+  // Periodic WiFi check (only in station mode)
+  if (now - lastWifiCheck >= WIFI_CHECK_INTERVAL) {
+    lastWifiCheck = now;
+    checkWiFiConnection();
+  }
+
   // Handle WiFi client
   handleClient();
 
