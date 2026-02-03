@@ -28,13 +28,15 @@ class SettingsPanel(tk.Frame):
         parent: tk.Widget,
         on_save_home: Callable[[], None],
         on_save_well: Callable[[], None],
-        on_zero_position: Callable[[], None]
+        on_zero_position: Callable[[], None],
+        on_clear_fault: Callable[[], None] = None
     ):
         super().__init__(parent, bg=COLORS['bg_dark'])
 
         self._on_save_home = on_save_home
         self._on_save_well = on_save_well
         self._on_zero_position = on_zero_position
+        self._on_clear_fault = on_clear_fault
 
         self._create_widgets()
 
@@ -147,6 +149,21 @@ class SettingsPanel(tk.Frame):
         )
         self._zero_btn.pack(side='left')
 
+        # Spacer
+        tk.Frame(content_row, bg=COLORS['bg_panel'], width=12).pack(side='left')
+
+        # Clear Fault button
+        self._clear_fault_btn = ModernButton(
+            content_row,
+            text="CLR FAULT",
+            command=self._on_clear_fault if self._on_clear_fault else lambda: None,
+            width=75,
+            height=26,
+            bg_color=COLORS['btn_danger'],
+            font=FONTS['small']
+        )
+        self._clear_fault_btn.pack(side='left')
+
     def update_home_position(self, saved: bool, position: Optional[int]) -> None:
         """Update home position display."""
         if saved and position is not None:
@@ -170,3 +187,4 @@ class SettingsPanel(tk.Frame):
         self._save_home_btn.set_enabled(enabled)
         self._save_well_btn.set_enabled(enabled)
         self._zero_btn.set_enabled(enabled)
+        self._clear_fault_btn.set_enabled(enabled)

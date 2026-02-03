@@ -359,6 +359,10 @@ class SerialManager:
         """Save current position as well."""
         return self.send_command(Commands.SAVE_WELL)
 
+    def zero_position(self) -> bool:
+        """Zero the current position (set current position as 0)."""
+        return self.send_command(Commands.ZERO_POSITION)
+
     def go_to_position(self, steps: int) -> bool:
         """Go to absolute position."""
         return self.send_command(Commands.go_to_position(steps))

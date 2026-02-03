@@ -62,6 +62,9 @@ class Commands:
     SAVE_HOME = "SH"
     SAVE_WELL = "SW"
 
+    # Position commands
+    ZERO_POSITION = "ZP"
+
     # Query command
     STATUS = "?"
 
