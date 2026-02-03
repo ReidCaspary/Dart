@@ -9,7 +9,30 @@ from typing import List, Tuple
 
 
 # =============================================================================
-# PULLEY SYSTEM (Raspberry Pi -> STAC5)
+# STAC5 MOTOR CONTROLLER (Direct Ethernet Connection)
+# =============================================================================
+
+# STAC5 IP address (direct connection over Starlink)
+STAC5_HOST: str = "192.168.1.40"
+
+# STAC5 TCP port (eSCL protocol)
+STAC5_TCP_PORT: int = 7776
+
+# STAC5 UDP port (alternative, less reliable)
+STAC5_UDP_PORT: int = 7775
+
+# STAC5 status poll interval in seconds
+STAC5_POLL_INTERVAL_SEC: float = 0.15  # 150ms
+
+# STAC5 connection timeout in seconds
+STAC5_CONNECT_TIMEOUT: float = 5.0
+
+# STAC5 command timeout in seconds
+STAC5_COMMAND_TIMEOUT: float = 1.0
+
+
+# =============================================================================
+# PULLEY SYSTEM (Raspberry Pi -> STAC5) - LEGACY
 # =============================================================================
 
 # Raspberry Pi pulley controller IP address

@@ -1,0 +1,567 @@
+"""
+STAC5 Motor Controller Manager
+
+Handles direct TCP communication with the STAC5-IP stepper drive using eSCL protocol.
+"""
+
+import socket
+import threading
+import time
+from typing import Optional, Callable, Tuple
+from dataclasses import dataclass
+
+
+# eSCL Protocol Constants
+ESCL_HEADER = bytes([0x00, 0x07])
+CARRIAGE_RETURN = bytes([0x0D])
+
+
+@dataclass
+class STAC5Status:
+    """Status data from the STAC5 controller."""
+    connected: bool = False
+    encoder_position: int = 0
+    alarm_code: str = "0000"
+    status_code: str = "0000"
+    is_moving: bool = False
+    motor_enabled: bool = False
+    home_position: Optional[int] = None
+    well_position: Optional[int] = None
+    jog_velocity: float = 2.0
+    move_velocity: float = 1.5
+
+
+class STAC5Manager:
+    """
+    Manages communication with STAC5 motor controller over Ethernet.
+
+    Uses eSCL (SCL over Ethernet) protocol:
+    - TCP port 7776
+    - Packet format: [0x00, 0x07] + ASCII command + [0x0D]
+    """
+
+    def __init__(self, host: str = "192.168.1.40", port: int = 7776):
+        self.host = host
+        self.port = port
+        self.socket: Optional[socket.socket] = None
+        self._lock = threading.Lock()
+        self._connected = False
+
+        # Status
+        self.status = STAC5Status()
+
+        # Polling
+        self._poll_thread: Optional[threading.Thread] = None
+        self._polling = False
+        self._poll_interval = 0.15  # 150ms
+
+        # Callbacks
+        self._status_callback: Optional[Callable[[STAC5Status], None]] = None
+        self._error_callback: Optional[Callable[[str], None]] = None
+
+        # Motion defaults
+        self.default_jog_velocity = 2.0    # rev/sec
+        self.default_move_velocity = 1.5   # rev/sec
+        self.default_acceleration = 10.0   # rev/sec^2
+        self.default_deceleration = 10.0   # rev/sec^2
+
+    def set_status_callback(self, callback: Callable[[STAC5Status], None]):
+        """Set callback for status updates."""
+        self._status_callback = callback
+
+    def set_error_callback(self, callback: Callable[[str], None]):
+        """Set callback for error notifications."""
+        self._error_callback = callback
+
+    def _notify_error(self, message: str):
+        """Notify error via callback."""
+        print(f"[STAC5] Error: {message}")
+        if self._error_callback:
+            self._error_callback(message)
+
+    def _notify_status(self):
+        """Notify status update via callback."""
+        if self._status_callback:
+            self._status_callback(self.status)
+
+    def _decode_alarm(self, alarm_code: str) -> str:
+        """Decode alarm code to human-readable message."""
+        # STAC5 alarm codes (from Applied Motion documentation)
+        alarm_messages = {
+            "0000": "No Alarm",
+            "0001": "Position Limit",
+            "0002": "CCW Limit",
+            "0004": "CW Limit",
+            "0008": "Over Temp",
+            "0010": "Internal Voltage",
+            "0020": "Over Voltage",
+            "0040": "Under Voltage",
+            "0080": "Over Current",
+            "0100": "Open Motor Winding",
+            "0200": "Bad Encoder",
+            "0400": "Comm Error",
+            "0800": "Bad Flash",
+            "1000": "No Move",
+            "2000": "Blank Q Segment",
+            "4000": "No Motor Connected",
+            "8000": "Motor Disabled",
+        }
+        # Try exact match first
+        if alarm_code in alarm_messages:
+            return alarm_messages[alarm_code]
+        # Try to decode as hex bitmask
+        try:
+            code = int(alarm_code, 16)
+            if code == 0:
+                return "No Alarm"
+            # Check each bit
+            alarms = []
+            for hex_code, msg in alarm_messages.items():
+                bit = int(hex_code, 16)
+                if bit and (code & bit):
+                    alarms.append(msg)
+            return ", ".join(alarms) if alarms else f"Unknown ({alarm_code})"
+        except:
+            return f"Unknown ({alarm_code})"
+
+    def _build_packet(self, command: str) -> bytes:
+        """Build an eSCL packet for the given SCL command."""
+        return ESCL_HEADER + command.encode('ascii') + CARRIAGE_RETURN
+
+    def _parse_response(self, data: bytes) -> Optional[str]:
+        """Parse an eSCL response packet."""
+        if len(data) < 3:
+            return None
+
+        # Check header
+        if data[0] != 0x00 or data[1] != 0x07:
+            # Some responses might not have header
+            return data.decode('ascii', errors='replace').strip()
+
+        # Extract the response (skip header, remove CR)
+        response = data[2:].decode('ascii', errors='replace').strip()
+        return response
+
+    def connect(self) -> bool:
+        """Connect to the STAC5 controller."""
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(5.0)
+            self.socket.connect((self.host, self.port))
+            self._connected = True
+            self.status.connected = True
+            print(f"[STAC5] Connected to {self.host}:{self.port}")
+
+            # Initialize drive settings
+            self._init_drive()
+
+            return True
+
+        except Exception as e:
+            self._notify_error(f"Connection failed: {e}")
+            self._connected = False
+            self.status.connected = False
+            return False
+
+    def disconnect(self):
+        """Disconnect from the STAC5 controller."""
+        self.stop_polling()
+
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+        self.socket = None
+        self._connected = False
+        self.status.connected = False
+        print("[STAC5] Disconnected")
+
+    def is_connected(self) -> bool:
+        """Check if connected to STAC5."""
+        return self._connected
+
+    def _init_drive(self):
+        """Initialize drive with default settings."""
+        self.send_command(f"AC{self.default_acceleration:.1f}")  # Acceleration
+        self.send_command(f"DE{self.default_deceleration:.1f}")  # Deceleration
+        self.send_command("ME")  # Motor Enable
+        self.status.motor_enabled = True
+
+        # Note: Network watchdog commands (ZS, ZE, ZA) are not supported on
+        # the STAC5-IP-E120. Safety is provided by using incremental jogging
+        # (small FL moves) instead of continuous jogging. If communication
+        # fails, motor only travels one small increment before stopping.
+
+    def send_command(self, command: str, timeout: float = 1.0) -> Optional[str]:
+        """
+        Send an SCL command and get response.
+
+        Args:
+            command: SCL command string (e.g., "RV", "ME", "EP")
+            timeout: Response timeout in seconds
+
+        Returns:
+            Response string, or None if failed
+        """
+        if not self._connected or not self.socket:
+            return None
+
+        with self._lock:
+            try:
+                # Clear any pending data in receive buffer first
+                self.socket.setblocking(False)
+                try:
+                    while True:
+                        self.socket.recv(1024)
+                except:
+                    pass
+                self.socket.setblocking(True)
+
+                # Build and send packet
+                packet = self._build_packet(command)
+                self.socket.sendall(packet)
+
+                # Small delay to let response arrive
+                time.sleep(0.05)
+
+                # Read response
+                self.socket.settimeout(timeout)
+                response_data = b""
+
+                while True:
+                    try:
+                        data = self.socket.recv(1024)
+                        if not data:
+                            break
+                        response_data += data
+                        # Check for response terminators
+                        if b'\r' in response_data or b'%' in response_data or b'?' in response_data:
+                            break
+                    except socket.timeout:
+                        break
+
+                response = self._parse_response(response_data)
+                print(f"[STAC5] TX: {command} | RX: {response}")
+                return response
+
+            except Exception as e:
+                self._notify_error(f"Command failed: {e}")
+                self._connected = False
+                self.status.connected = False
+                return None
+
+    # =========================================================================
+    # Status Commands
+    # =========================================================================
+
+    def get_encoder_position(self) -> Optional[int]:
+        """Read current encoder position."""
+        response = self.send_command("EP")
+        if response:
+            try:
+                # Response format: "EP=12345" or "EP=12345 EP=12345" (duplicated)
+                # Find first EP= and extract the number after it
+                if "EP=" in response:
+                    idx = response.find("EP=") + 3
+                    end = idx
+                    # Extract digits and minus sign
+                    while end < len(response) and (response[end].isdigit() or response[end] == '-'):
+                        end += 1
+                    return int(response[idx:end])
+                else:
+                    # Fallback: try to parse cleaned response
+                    clean = response.replace("=", "").replace("EP", "")
+                    clean = clean.replace("%", "").replace("?", "").replace("*", "").strip()
+                    # Take first number if multiple
+                    parts = clean.split()
+                    if parts:
+                        return int(parts[0])
+            except ValueError:
+                pass
+        return None
+
+    def get_alarm_code(self) -> Optional[str]:
+        """Read alarm status."""
+        response = self.send_command("AL")
+        if response:
+            clean = response.replace("=", "").replace("AL", "")
+            clean = clean.replace("%", "").replace("?", "").replace("*", "").strip()
+            return clean
+        return None
+
+    def get_status_code(self) -> Optional[str]:
+        """Read drive status code."""
+        response = self.send_command("SC")
+        if response:
+            # Response format: "SC=0001" or duplicated
+            if "SC=" in response:
+                idx = response.find("SC=") + 3
+                end = idx
+                while end < len(response) and response[end].isalnum():
+                    end += 1
+                return response[idx:end]
+            else:
+                clean = response.replace("=", "").replace("SC", "")
+                clean = clean.replace("%", "").replace("?", "").replace("*", "").strip()
+                parts = clean.split()
+                if parts:
+                    return parts[0]
+        return None
+
+    def get_immediate_velocity(self) -> Optional[float]:
+        """Read current velocity."""
+        response = self.send_command("IV")
+        if response:
+            try:
+                clean = response.replace("=", "").replace("IV", "")
+                clean = clean.replace("%", "").replace("?", "").replace("*", "").strip()
+                return float(clean)
+            except ValueError:
+                pass
+        return None
+
+    # =========================================================================
+    # Motor Control Commands
+    # =========================================================================
+
+    def motor_enable(self) -> bool:
+        """Enable the motor."""
+        response = self.send_command("ME")
+        if response is not None:
+            self.status.motor_enabled = True
+            return True
+        return False
+
+    def motor_disable(self) -> bool:
+        """Disable the motor."""
+        response = self.send_command("MD")
+        if response is not None:
+            self.status.motor_enabled = False
+            return True
+        return False
+
+    def alarm_reset(self) -> bool:
+        """Clear any alarms."""
+        old_alarm = self.status.alarm_code
+        response = self.send_command("AR")
+        if response is not None:
+            print(f"[STAC5] Alarm reset sent (was: {old_alarm})")
+            self.status.alarm_code = "0000"
+            return True
+        return False
+
+    def stop(self) -> bool:
+        """Stop motion (controlled deceleration)."""
+        response = self.send_command("ST")
+        self.status.is_moving = False
+        return response is not None
+
+    def stop_kill(self) -> bool:
+        """Emergency stop (immediate)."""
+        response = self.send_command("SK")
+        self.status.is_moving = False
+        return response is not None
+
+    # =========================================================================
+    # Jog Commands (DI-based direction control)
+    # =========================================================================
+
+    def jog_start(self, direction: int) -> bool:
+        """
+        Start jogging in specified direction.
+
+        Uses DI command to set direction before CJ, since SD (Set Direction)
+        is not supported on STAC5-IP-E120. DI1 or DI-1 sets the internal
+        direction flag that CJ then uses.
+
+        Args:
+            direction: 1 = positive (CW), -1 = negative (CCW)
+        """
+        # Set direction using DI command (DI1 = positive, DI-1 = negative)
+        dir_cmd = "DI1" if direction >= 0 else "DI-1"
+        self.send_command(dir_cmd)
+
+        # Set jog speed
+        self.send_command(f"JS{self.status.jog_velocity:.1f}")
+
+        # Commence jogging
+        response = self.send_command("CJ")
+        if response is not None:
+            self.status.is_moving = True
+            return True
+        return False
+
+    def jog_stop(self) -> bool:
+        """Stop jogging (decelerate to stop)."""
+        response = self.send_command("SJ")
+        self.status.is_moving = False
+        return response is not None
+
+    def set_jog_velocity(self, rps: float) -> bool:
+        """Set jog velocity in rev/sec."""
+        if 0.1 <= rps <= 20.0:
+            self.status.jog_velocity = rps
+            return True
+        return False
+
+    # =========================================================================
+    # Move Commands
+    # =========================================================================
+
+    def move_relative(self, steps: int) -> bool:
+        """Move relative number of steps."""
+        # Set velocity (always positive, with decimal point for compatibility)
+        self.send_command(f"VE{self.status.move_velocity:.1f}")
+
+        # Set distance (signed value - DI accepts positive and negative)
+        self.send_command(f"DI{steps}")
+
+        # Feed to length (execute move)
+        response = self.send_command("FL")
+        if response is not None:
+            self.status.is_moving = True
+            return True
+        return False
+
+    def move_to_position(self, target_steps: int) -> bool:
+        """Move to an absolute position."""
+        current = self.get_encoder_position()
+        if current is None:
+            return False
+
+        distance = target_steps - current
+        if distance == 0:
+            return True
+
+        return self.move_relative(distance)
+
+    def set_move_velocity(self, rps: float) -> bool:
+        """Set move velocity in rev/sec."""
+        if 0.1 <= rps <= 20.0:
+            self.status.move_velocity = rps
+            return True
+        return False
+
+    # =========================================================================
+    # Position Memory
+    # =========================================================================
+
+    def save_home(self) -> bool:
+        """Save current position as home."""
+        pos = self.get_encoder_position()
+        if pos is not None:
+            self.status.home_position = pos
+            print(f"[STAC5] Home saved at {pos}")
+            return True
+        return False
+
+    def save_well(self) -> bool:
+        """Save current position as well."""
+        pos = self.get_encoder_position()
+        if pos is not None:
+            self.status.well_position = pos
+            print(f"[STAC5] Well saved at {pos}")
+            return True
+        return False
+
+    def go_home(self) -> bool:
+        """Move to saved home position."""
+        if self.status.home_position is not None:
+            return self.move_to_position(self.status.home_position)
+        return False
+
+    def go_well(self) -> bool:
+        """Move to saved well position."""
+        if self.status.well_position is not None:
+            return self.move_to_position(self.status.well_position)
+        return False
+
+    def zero_encoder(self) -> bool:
+        """Zero the encoder position (set current position as 0)."""
+        response = self.send_command("EP0")
+        if response is not None:
+            self.status.encoder_position = 0
+            print("[STAC5] Encoder zeroed")
+            return True
+        return False
+
+    # =========================================================================
+    # Status Polling
+    # =========================================================================
+
+    def start_polling(self, interval: float = 0.15):
+        """Start polling for status updates."""
+        if self._polling:
+            return
+
+        self._poll_interval = interval
+        self._polling = True
+        self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._poll_thread.start()
+        print(f"[STAC5] Started polling (interval: {interval}s)")
+
+    def stop_polling(self):
+        """Stop polling for status updates."""
+        self._polling = False
+        if self._poll_thread:
+            self._poll_thread.join(timeout=1.0)
+            self._poll_thread = None
+        print("[STAC5] Stopped polling")
+
+    def _poll_loop(self):
+        """Background polling loop."""
+        last_alarm = "0000"  # Track last alarm to detect new faults
+
+        while self._polling and self._connected:
+            try:
+                # Read encoder position
+                pos = self.get_encoder_position()
+                if pos is not None:
+                    self.status.encoder_position = pos
+
+                # Read status code periodically
+                sc = self.get_status_code()
+                if sc:
+                    self.status.status_code = sc
+                    # Bit 0 of status code indicates motor enabled
+                    try:
+                        sc_int = int(sc, 16)
+                        self.status.motor_enabled = bool(sc_int & 0x0001)
+                    except:
+                        pass
+
+                # Read alarm code and detect new faults
+                al = self.get_alarm_code()
+                if al:
+                    self.status.alarm_code = al
+                    # Check if this is a new fault (non-zero and different from last)
+                    if al != "0000" and al != last_alarm:
+                        fault_msg = self._decode_alarm(al)
+                        print(f"[STAC5] FAULT DETECTED: {al} - {fault_msg}")
+                        self._notify_error(f"FAULT {al}: {fault_msg}")
+                    last_alarm = al
+
+                # Notify callback
+                self._notify_status()
+
+            except Exception as e:
+                print(f"[STAC5] Poll error: {e}")
+
+            time.sleep(self._poll_interval)
+
+    def poll_once(self) -> STAC5Status:
+        """Poll status once (blocking)."""
+        pos = self.get_encoder_position()
+        if pos is not None:
+            self.status.encoder_position = pos
+
+        sc = self.get_status_code()
+        if sc:
+            self.status.status_code = sc
+
+        al = self.get_alarm_code()
+        if al:
+            self.status.alarm_code = al
+
+        return self.status

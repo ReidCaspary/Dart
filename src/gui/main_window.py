@@ -16,11 +16,16 @@ from ..config import (
     WINDOW_TITLE,
     DEFAULT_JOG_SPEED_RPS,
     DEFAULT_MOVE_SPEED_RPS,
+    STAC5_HOST,
+    STAC5_TCP_PORT,
+    STAC5_POLL_INTERVAL_SEC,
+    STEPS_PER_REVOLUTION,
 )
 from ..serial_manager import SerialManager, ConnectionState
 from ..wifi_manager import DropCylinderManager, DropCylinderConnectionState, ConnectionMode
 from ..drop_cylinder_protocol import DropCylinderStatus
-from ..command_protocol import WinchStatus
+from ..command_protocol import WinchStatus, MotionMode
+from ..stac5_manager import STAC5Manager, STAC5Status
 from .position_display import PositionDisplay
 from .control_panel import ControlPanel
 from .settings_panel import SettingsPanel
@@ -62,12 +67,16 @@ class MainWindow:
         self._root = root
         self._serial_manager = SerialManager()
         self._drop_cylinder_manager = DropCylinderManager()
+        self._stac5_manager = STAC5Manager(STAC5_HOST, STAC5_TCP_PORT)
 
         # Track pressed keys for jog
         self._pressed_keys: Set[str] = set()
 
         # Track if we've shown a drop cylinder error (to avoid spam)
         self._drop_error_shown = False
+
+        # Track STAC5 connection errors
+        self._stac5_error_shown = False
 
         # Setup window
         self._setup_window()
@@ -129,7 +138,8 @@ class MainWindow:
             self._root,
             on_save_home=self._on_save_home,
             on_save_well=self._on_save_well,
-            on_zero_position=self._on_zero_position
+            on_zero_position=self._on_zero_position,
+            on_clear_fault=self._on_clear_fault
         )
         self._settings_panel.grid(row=4, column=0, sticky="ew", padx=5, pady=2)
 
@@ -177,7 +187,7 @@ class MainWindow:
         self._status_bar.grid(row=6, column=0, columnspan=2, sticky="ew", padx=5, pady=2)
 
     def _create_connection_bar(self) -> None:
-        """Create the connection controls bar."""
+        """Create the connection controls bar with STAC5 and legacy serial options."""
         # Outer container with border (spans both columns)
         conn_outer = tk.Frame(self._root, bg=COLORS['border'], padx=1, pady=1)
         conn_outer.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=8)
@@ -185,57 +195,95 @@ class MainWindow:
         conn_frame = tk.Frame(conn_outer, bg=COLORS['bg_header'], padx=12, pady=8)
         conn_frame.pack(fill='x')
 
-        # Port selection
-        port_label = tk.Label(conn_frame, text="Port:", font=FONTS['body'],
+        # === STAC5 Motor Controller Connection (Primary) ===
+        stac5_label = tk.Label(conn_frame, text="STAC5:", font=FONTS['subheading'],
+                               bg=COLORS['bg_header'], fg=COLORS['text_primary'])
+        stac5_label.pack(side=tk.LEFT, padx=(0, 6))
+
+        # IP Address entry
+        self._stac5_ip_var = tk.StringVar(value=STAC5_HOST)
+        self._stac5_ip_entry = ttk.Entry(conn_frame, textvariable=self._stac5_ip_var, width=14)
+        self._stac5_ip_entry.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Port entry
+        port_label = tk.Label(conn_frame, text=":", font=FONTS['body'],
                               bg=COLORS['bg_header'], fg=COLORS['text_secondary'])
-        port_label.pack(side=tk.LEFT, padx=(0, 6))
+        port_label.pack(side=tk.LEFT)
+
+        self._stac5_port_var = tk.StringVar(value=str(STAC5_TCP_PORT))
+        self._stac5_port_entry = ttk.Entry(conn_frame, textvariable=self._stac5_port_var, width=5)
+        self._stac5_port_entry.pack(side=tk.LEFT, padx=(0, 8))
+
+        # STAC5 Connect/Disconnect button
+        self._stac5_connect_btn = ModernButton(
+            conn_frame,
+            text="Connect",
+            command=self._toggle_stac5_connection,
+            width=100,
+            height=32,
+            bg_color=COLORS['btn_primary'],
+            glow=True,
+            font=FONTS['button']
+        )
+        self._stac5_connect_btn.pack(side=tk.LEFT)
+
+        # STAC5 status indicator
+        self._stac5_status_label = tk.Label(
+            conn_frame, text="\u25CF", font=FONTS['body'],
+            bg=COLORS['bg_header'], fg=COLORS['text_secondary']
+        )
+        self._stac5_status_label.pack(side=tk.LEFT, padx=(8, 0))
+
+        # Separator
+        sep = tk.Frame(conn_frame, width=2, height=28, bg=COLORS['border'])
+        sep.pack(side=tk.LEFT, padx=16)
+
+        # === Legacy Serial Connection (for other devices) ===
+        legacy_label = tk.Label(conn_frame, text="Serial:", font=FONTS['body'],
+                                bg=COLORS['bg_header'], fg=COLORS['text_secondary'])
+        legacy_label.pack(side=tk.LEFT, padx=(0, 6))
 
         self._port_var = tk.StringVar()
         self._port_combo = ttk.Combobox(
             conn_frame,
             textvariable=self._port_var,
-            width=12,
+            width=10,
             state="readonly"
         )
-        self._port_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self._port_combo.pack(side=tk.LEFT, padx=(0, 4))
 
         # Refresh ports button
         self._refresh_btn = ModernButton(
             conn_frame,
             text="\u21BB",
             command=self._refresh_ports,
-            width=32,
+            width=28,
             height=28,
             bg_color=COLORS['btn_secondary'],
             font=FONTS['body']
         )
-        self._refresh_btn.pack(side=tk.LEFT, padx=(0, 16))
+        self._refresh_btn.pack(side=tk.LEFT, padx=(0, 8))
 
         # Baud rate selection
-        baud_label = tk.Label(conn_frame, text="Baud:", font=FONTS['body'],
-                              bg=COLORS['bg_header'], fg=COLORS['text_secondary'])
-        baud_label.pack(side=tk.LEFT, padx=(0, 6))
-
         self._baud_var = tk.StringVar(value=str(self.DEFAULT_BAUD))
         self._baud_combo = ttk.Combobox(
             conn_frame,
             textvariable=self._baud_var,
             values=[str(b) for b in self.BAUD_RATES],
-            width=8,
+            width=7,
             state="readonly"
         )
-        self._baud_combo.pack(side=tk.LEFT, padx=(0, 12))
+        self._baud_combo.pack(side=tk.LEFT, padx=(0, 8))
 
-        # Connect/Disconnect button
+        # Serial Connect/Disconnect button
         self._connect_btn = ModernButton(
             conn_frame,
             text="Connect",
             command=self._toggle_connection,
-            width=100,
-            height=32,
-            bg_color=COLORS['btn_primary'],
-            glow=True,
-            font=FONTS['button']
+            width=80,
+            height=28,
+            bg_color=COLORS['btn_secondary'],
+            font=FONTS['body']
         )
         self._connect_btn.pack(side=tk.LEFT)
 
@@ -252,13 +300,17 @@ class MainWindow:
         self._settings_btn.pack(side=tk.LEFT, padx=(16, 0))
 
     def _setup_callbacks(self) -> None:
-        """Setup serial and WiFi manager callbacks."""
-        # Serial (main winch)
+        """Setup serial, WiFi, and STAC5 manager callbacks."""
+        # Serial (legacy winch - kept for reference)
         self._serial_manager.set_status_callback(self._on_status_update)
         self._serial_manager.set_connection_callback(self._on_connection_change)
         self._serial_manager.set_command_sent_callback(self._on_command_sent)
         self._serial_manager.set_response_callback(self._on_response_received)
         self._serial_manager.set_error_callback(self._on_error)
+
+        # STAC5 Motor Controller (primary)
+        self._stac5_manager.set_status_callback(self._on_stac5_status_update)
+        self._stac5_manager.set_error_callback(self._on_stac5_error)
 
         # Drop cylinder (WiFi or Serial)
         self._drop_cylinder_manager.set_status_callback(self._on_drop_status_update)
@@ -317,36 +369,164 @@ class MainWindow:
             self._serial_manager.connect(port, baud)
 
     def _update_controls_state(self) -> None:
-        """Update control states based on connection and E-stop."""
-        connected = self._serial_manager.is_connected
-        status = self._serial_manager.last_status
-        estop = status.estop_active if status else False
+        """Update control states based on STAC5 connection status."""
+        # Check STAC5 connection (primary control)
+        stac5_connected = self._stac5_manager.is_connected()
+        stac5_status = self._stac5_manager.status
 
-        # Enable/disable controls
-        enabled = connected and not estop
+        # Check legacy serial connection
+        serial_connected = self._serial_manager.is_connected
+        serial_status = self._serial_manager.last_status
+        estop = serial_status.estop_active if serial_status else False
+
+        # Enable controls if STAC5 is connected (primary) or serial is connected (legacy)
+        enabled = stac5_connected or (serial_connected and not estop)
         self._control_panel.set_enabled(enabled)
         self._settings_panel.set_enabled(enabled)
 
-        # Update home/well button states
-        if status:
-            self._control_panel.set_home_enabled(enabled and status.home_saved)
-            self._control_panel.set_well_enabled(enabled and status.well_saved)
+        # Update home/well button states based on STAC5 or serial status
+        if stac5_connected:
+            self._control_panel.set_home_enabled(enabled and stac5_status.home_position is not None)
+            self._control_panel.set_well_enabled(enabled and stac5_status.well_position is not None)
+        elif serial_status:
+            self._control_panel.set_home_enabled(enabled and serial_status.home_saved)
+            self._control_panel.set_well_enabled(enabled and serial_status.well_saved)
         else:
             self._control_panel.set_home_enabled(False)
             self._control_panel.set_well_enabled(False)
 
-        # Update connection button text and color
-        if connected:
+        # Update STAC5 connection button text and color
+        if stac5_connected:
+            self._stac5_connect_btn.set_text("Disconnect")
+            self._stac5_connect_btn.configure_colors(bg_color=COLORS['btn_danger'])
+            self._stac5_status_label.configure(fg=COLORS['accent_green'])
+            self._stac5_ip_entry.configure(state="disabled")
+            self._stac5_port_entry.configure(state="disabled")
+        else:
+            self._stac5_connect_btn.set_text("Connect")
+            self._stac5_connect_btn.configure_colors(bg_color=COLORS['btn_primary'])
+            self._stac5_status_label.configure(fg=COLORS['text_secondary'])
+            self._stac5_ip_entry.configure(state="normal")
+            self._stac5_port_entry.configure(state="normal")
+
+        # Update legacy serial connection button text and color
+        if serial_connected:
             self._connect_btn.set_text("Disconnect")
             self._connect_btn.configure_colors(bg_color=COLORS['btn_danger'])
         else:
             self._connect_btn.set_text("Connect")
-            self._connect_btn.configure_colors(bg_color=COLORS['btn_primary'])
+            self._connect_btn.configure_colors(bg_color=COLORS['btn_secondary'])
 
         # Disable port selection when connected
-        port_state = "disabled" if connected else "readonly"
+        port_state = "disabled" if serial_connected else "readonly"
         self._port_combo.configure(state=port_state)
         self._baud_combo.configure(state=port_state)
+
+    # =========================================================================
+    # STAC5 Motor Controller Methods
+    # =========================================================================
+
+    def _toggle_stac5_connection(self) -> None:
+        """Connect or disconnect from STAC5 motor controller."""
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.disconnect()
+            self._update_controls_state()
+            self._status_bar.set_connection_state(ConnectionState.DISCONNECTED, "STAC5 Disconnected")
+            self._position_display.set_disconnected()
+        else:
+            ip = self._stac5_ip_var.get().strip()
+            try:
+                port = int(self._stac5_port_var.get())
+            except ValueError:
+                port = STAC5_TCP_PORT
+
+            # Update manager with new IP/port
+            self._stac5_manager.host = ip
+            self._stac5_manager.port = port
+
+            self._status_bar.set_connection_state(ConnectionState.CONNECTING, f"Connecting to {ip}:{port}...")
+
+            # Connect in background to avoid blocking GUI
+            import threading
+            def connect_thread():
+                success = self._stac5_manager.connect()
+                if success:
+                    self._stac5_manager.start_polling(STAC5_POLL_INTERVAL_SEC)
+                self._root.after(0, self._on_stac5_connect_result, success)
+
+            threading.Thread(target=connect_thread, daemon=True).start()
+
+    def _on_stac5_connect_result(self, success: bool) -> None:
+        """Handle STAC5 connection result (called on main thread)."""
+        if success:
+            self._status_bar.set_connection_state(
+                ConnectionState.CONNECTED,
+                f"Connected to STAC5 at {self._stac5_manager.host}"
+            )
+            self._stac5_error_shown = False
+        else:
+            self._status_bar.set_connection_state(
+                ConnectionState.DISCONNECTED,
+                "STAC5 connection failed"
+            )
+            if not self._stac5_error_shown:
+                self._stac5_error_shown = True
+                messagebox.showerror(
+                    "Connection Failed",
+                    f"Could not connect to STAC5 at {self._stac5_manager.host}:{self._stac5_manager.port}\n\n"
+                    "Please check:\n"
+                    "- The STAC5 is powered on\n"
+                    "- The IP address is correct\n"
+                    "- Network connectivity (Starlink)"
+                )
+        self._update_controls_state()
+
+    def _on_stac5_status_update(self, status: STAC5Status) -> None:
+        """Handle STAC5 status update (called from background thread)."""
+        self._root.after(0, self._update_stac5_status_display, status)
+
+    def _update_stac5_status_display(self, status: STAC5Status) -> None:
+        """Update displays with STAC5 status (called on main thread)."""
+        # Create a WinchStatus-compatible object for the position display
+        # This allows reusing the existing position display widget
+        class STAC5WinchStatus:
+            def __init__(self, s: STAC5Status):
+                self.position = s.encoder_position
+                self.is_moving = s.is_moving
+                self.motor_enabled = s.motor_enabled
+                self.estop_active = False
+                self.home_saved = s.home_position is not None
+                self.well_saved = s.well_position is not None
+                self.home_position = s.home_position if s.home_position else 0
+                self.well_position = s.well_position if s.well_position else 0
+                self.max_jog_rps = s.jog_velocity
+                self.max_move_rps = s.move_velocity
+                # Motion mode based on is_moving flag
+                self.mode = MotionMode.JOG if s.is_moving else MotionMode.IDLE
+                # Speed - we don't have real-time velocity from STAC5, show jog velocity
+                self.speed_rps = s.jog_velocity if s.is_moving else 0.0
+
+            @property
+            def position_revolutions(self) -> float:
+                return self.position / STEPS_PER_REVOLUTION
+
+        compat_status = STAC5WinchStatus(status)
+        self._position_display.update_status(compat_status)
+        self._settings_panel.update_home_position(status.home_position is not None, status.home_position or 0)
+        self._settings_panel.update_well_position(status.well_position is not None, status.well_position or 0)
+        self._update_controls_state()
+
+    def _on_stac5_error(self, message: str) -> None:
+        """Handle STAC5 error (called from background thread)."""
+        self._root.after(0, self._show_stac5_error, message)
+
+    def _show_stac5_error(self, message: str) -> None:
+        """Show STAC5 error message (called on main thread)."""
+        self._status_bar.set_connection_state(ConnectionState.ERROR, f"STAC5: {message}")
+        # Don't spam error dialogs
+        if not self._stac5_error_shown:
+            self._stac5_error_shown = True
+            messagebox.showerror("STAC5 Error", message)
 
     # Serial callbacks (called from background thread)
 
@@ -395,61 +575,112 @@ class MainWindow:
         """Show error message to user."""
         messagebox.showerror("Error", message)
 
-    # Control callbacks
+    # Control callbacks (routes to STAC5 if connected, otherwise serial)
 
     def _on_jog_left_press(self) -> None:
         """Handle jog left press."""
-        self._serial_manager.jog_left()
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.jog_start(-1)  # Negative direction
+        else:
+            self._serial_manager.jog_left()
 
     def _on_jog_left_release(self) -> None:
         """Handle jog left release."""
-        self._serial_manager.jog_stop()
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.jog_stop()
+        else:
+            self._serial_manager.jog_stop()
 
     def _on_jog_right_press(self) -> None:
         """Handle jog right press."""
-        self._serial_manager.jog_right()
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.jog_start(1)  # Positive direction
+        else:
+            self._serial_manager.jog_right()
 
     def _on_jog_right_release(self) -> None:
         """Handle jog right release."""
-        self._serial_manager.jog_stop()
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.jog_stop()
+        else:
+            self._serial_manager.jog_stop()
 
     def _on_go_home(self) -> None:
         """Handle go home button."""
-        self._serial_manager.go_home()
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.go_home()
+        else:
+            self._serial_manager.go_home()
 
     def _on_go_well(self) -> None:
         """Handle go well button."""
-        self._serial_manager.go_well()
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.go_well()
+        else:
+            self._serial_manager.go_well()
 
     def _on_stop(self) -> None:
         """Handle stop button."""
-        self._serial_manager.stop()
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.stop()
+        else:
+            self._serial_manager.stop()
 
     def _on_go_to(self, steps: int) -> None:
         """Handle go to absolute position."""
-        self._serial_manager.go_to_position(steps)
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.move_to_position(steps)
+        else:
+            self._serial_manager.go_to_position(steps)
 
     def _on_move_relative(self, steps: int) -> None:
         """Handle relative move."""
-        self._serial_manager.move_relative(steps)
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.move_relative(steps)
+        else:
+            self._serial_manager.move_relative(steps)
 
     def _on_save_home(self) -> None:
         """Handle save home button."""
-        self._serial_manager.save_home()
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.save_home()
+        else:
+            self._serial_manager.save_home()
 
     def _on_save_well(self) -> None:
         """Handle save well button."""
-        self._serial_manager.save_well()
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.save_well()
+        else:
+            self._serial_manager.save_well()
 
     def _on_zero_position(self) -> None:
-        """Handle zero position button (go to 0)."""
-        self._serial_manager.go_to_position(0)
+        """Handle zero position button (set current position as 0)."""
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.zero_encoder()
+        else:
+            self._serial_manager.zero_position()
+
+    def _on_clear_fault(self) -> None:
+        """Handle clear fault button."""
+        if self._stac5_manager.is_connected():
+            old_alarm = self._stac5_manager.status.alarm_code
+            self._stac5_manager.alarm_reset()
+            # Also re-enable motor after clearing fault
+            self._stac5_manager.motor_enable()
+            print(f"[STAC5] Fault cleared (was: {old_alarm})")
+            self._status_bar.set_last_response(f"Fault {old_alarm} cleared")
 
     def _open_settings(self) -> None:
         """Open speed settings dialog."""
-        status = self._serial_manager.last_status
-        jog_rps = status.max_jog_rps if status else DEFAULT_JOG_SPEED_RPS
-        move_rps = status.max_move_rps if status else DEFAULT_MOVE_SPEED_RPS
+        # Get current settings from STAC5 or serial manager
+        if self._stac5_manager.is_connected():
+            jog_rps = self._stac5_manager.status.jog_velocity
+            move_rps = self._stac5_manager.status.move_velocity
+        else:
+            status = self._serial_manager.last_status
+            jog_rps = status.max_jog_rps if status else DEFAULT_JOG_SPEED_RPS
+            move_rps = status.max_move_rps if status else DEFAULT_MOVE_SPEED_RPS
 
         SettingsDialog(
             self._root,
@@ -460,7 +691,10 @@ class MainWindow:
 
     def _apply_speed_settings(self, jog_rps: float, move_rps: float) -> None:
         """Apply new speed settings."""
-        if self._serial_manager.is_connected:
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.set_jog_velocity(jog_rps)
+            self._stac5_manager.set_move_velocity(move_rps)
+        elif self._serial_manager.is_connected:
             self._serial_manager.set_jog_speed(jog_rps)
             self._serial_manager.set_move_speed(move_rps)
 
@@ -556,9 +790,13 @@ class MainWindow:
 
     # Keyboard handlers
 
+    def _is_motor_connected(self) -> bool:
+        """Check if any motor controller is connected (STAC5 or serial)."""
+        return self._stac5_manager.is_connected() or self._serial_manager.is_connected
+
     def _on_key_left_press(self, event: tk.Event) -> None:
         """Handle left arrow key press."""
-        if not self._serial_manager.is_connected:
+        if not self._is_motor_connected():
             return
         # Check if focus is in an entry widget
         if isinstance(self._root.focus_get(), ttk.Entry):
@@ -575,7 +813,7 @@ class MainWindow:
 
     def _on_key_right_press(self, event: tk.Event) -> None:
         """Handle right arrow key press."""
-        if not self._serial_manager.is_connected:
+        if not self._is_motor_connected():
             return
         # Check if focus is in an entry widget
         if isinstance(self._root.focus_get(), ttk.Entry):
@@ -592,7 +830,7 @@ class MainWindow:
 
     def _on_key_stop(self, event: tk.Event) -> None:
         """Handle stop key (space/escape)."""
-        if not self._serial_manager.is_connected:
+        if not self._is_motor_connected():
             return
         # Check if focus is in an entry widget (allow space in entries)
         if isinstance(self._root.focus_get(), ttk.Entry) and event.keysym == "space":
@@ -601,27 +839,39 @@ class MainWindow:
 
     def _on_key_home(self, event: tk.Event) -> None:
         """Handle home key (H)."""
-        if not self._serial_manager.is_connected:
+        if not self._is_motor_connected():
             return
         if isinstance(self._root.focus_get(), ttk.Entry):
             return
-        status = self._serial_manager.last_status
-        if status and status.home_saved:
-            self._on_go_home()
+        # Check STAC5 first, then serial
+        if self._stac5_manager.is_connected():
+            if self._stac5_manager.status.home_position is not None:
+                self._on_go_home()
+        else:
+            status = self._serial_manager.last_status
+            if status and status.home_saved:
+                self._on_go_home()
 
     def _on_key_well(self, event: tk.Event) -> None:
         """Handle well key (W)."""
-        if not self._serial_manager.is_connected:
+        if not self._is_motor_connected():
             return
         if isinstance(self._root.focus_get(), ttk.Entry):
             return
-        status = self._serial_manager.last_status
-        if status and status.well_saved:
-            self._on_go_well()
+        # Check STAC5 first, then serial
+        if self._stac5_manager.is_connected():
+            if self._stac5_manager.status.well_position is not None:
+                self._on_go_well()
+        else:
+            status = self._serial_manager.last_status
+            if status and status.well_saved:
+                self._on_go_well()
 
     def _on_close(self) -> None:
         """Handle window close."""
         # Disconnect if connected
+        if self._stac5_manager.is_connected():
+            self._stac5_manager.disconnect()
         if self._serial_manager.is_connected:
             self._serial_manager.disconnect()
         if self._drop_cylinder_manager.is_connected:
