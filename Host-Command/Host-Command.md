@@ -1,4 +1,189 @@
-This is the document which outlines the communication protocols or the STAC5-IP-E120. Use this to navigate the pdf documents in this folder. Each pdf has its corresponding page numbers in the file name ex: Host-Command-Reference - p151-200.pdf contains pages 151-200 of the whole Host-Command document. Each file also contains the same content chart you see below. 
+This is the document which outlines the communication protocols for the STAC5-IP-E120. Use this to navigate the pdf documents in this folder. Each pdf has its corresponding page numbers in the file name ex: Host-Command-Reference - p151-200.pdf contains pages 151-200 of the whole Host-Command document. Each file also contains the same content chart you see below.
+
+---
+
+# QUICK REFERENCE: Commands Used in This Project
+
+**NOTE FOR AI ASSISTANTS:** This section contains all the SCL commands used by `src/stac5_manager.py`. You do NOT need to read the PDF files for normal development - all required command details are documented here.
+
+## eSCL Protocol (Ethernet Communication)
+
+- **TCP Port:** 7776 (recommended - reliable)
+- **UDP Port:** 7775 (alternative)
+- **Packet Format:** `[0x00, 0x07]` + ASCII command + `[0x0D]` (carriage return)
+- **Response Format:** Same header + ASCII response + CR, or just ASCII with `%` (success) or `?` (error)
+
+Example packet for "ME" (Motor Enable):
+```
+Bytes: 0x00 0x07 0x4D 0x45 0x0D
+       [header] [ M ][ E ][CR]
+```
+
+## Motion Commands
+
+| Command | Name | Description | Example |
+|---------|------|-------------|---------|
+| **ME** | Motor Enable | Enables the motor driver | `ME` |
+| **MD** | Motor Disable | Disables the motor driver | `MD` |
+| **SD** | Set Direction | Sets jog direction. **SD0** = CW/positive, **SD1** = CCW/negative. **Only affects jogging, not FL moves.** | `SD0` or `SD1` |
+| **JS** | Jog Speed | Sets jog velocity in rev/sec. **MUST use decimal format. Only positive values - use SD for direction.** | `JS2.0` |
+| **CJ** | Commence Jogging | Starts jogging at the speed set by JS | `CJ` |
+| **SJ** | Stop Jogging | Stops jogging with deceleration | `SJ` |
+| **VE** | Velocity | Sets velocity for point-to-point moves in rev/sec. **MUST use decimal format.** | `VE1.5` |
+| **DI** | Distance | Sets distance for moves in steps. **Accepts SIGNED values for direction control.** | `DI4000` or `DI-4000` |
+| **FL** | Feed to Length | Executes a move using current VE and DI settings | `FL` |
+| **ST** | Stop | Stops motion with controlled deceleration | `ST` |
+| **SK** | Stop & Kill | Emergency stop - immediate halt, clears buffer | `SK` |
+
+### IMPORTANT FORMAT NOTES
+- **JS and VE MUST include decimal point**: `JS2.0` works, `JS2` returns error `?`
+- **JS does NOT accept negative values**: Returns error `?5`
+- **DI ACCEPTS signed values**: `DI2000` = positive, `DI-2000` = negative
+- **SD COMMAND DOES NOT WORK** on STAC5-IP-E120: Returns `?` error
+
+### CRITICAL: Unsupported Commands on STAC5-IP-E120
+The following commands return `?` error and are NOT supported:
+- **SD** (Set Direction) - Cannot use SD0/SD1 for jog direction
+- **JM** (Jog Mode) - Not available
+- **ZS, ZE, ZA** (Network Watchdog) - Not available
+
+**Solution for jogging**: Use **DI** to set direction before CJ:
+- DI1 + CJ = jog in positive direction
+- DI-1 + CJ = jog in negative direction
+- SJ = stop jogging
+- This gives smooth continuous jogging in both directions!
+
+### Jog Sequence Example (DI-based, since SD doesn't work)
+```
+# Jog POSITIVE direction:
+DI1             # Set direction positive (just 1 step, but sets direction flag)
+JS2.0           # Set jog speed (MUST have decimal)
+CJ              # Commence jogging (smooth continuous motion)
+...             # (motor runs until stopped)
+SJ              # Stop jogging
+
+# Jog NEGATIVE direction:
+DI-1            # Set direction negative
+JS2.0           # Set jog speed
+CJ              # Commence jogging
+...
+SJ              # Stop jogging
+```
+
+### Move Sequence Example (direction via signed DI)
+```
+VE1.5    # Set velocity to 1.5 rev/sec (MUST have decimal)
+DI-4000  # Set distance to -4000 steps (negative = CCW)
+FL       # Execute the move
+```
+
+## Configuration Commands
+
+| Command | Name | Description | Example |
+|---------|------|-------------|---------|
+| **AC** | Acceleration | Sets acceleration rate in rev/sec² | `AC10.0` |
+| **DE** | Deceleration | Sets deceleration rate in rev/sec² | `DE10.0` |
+
+## Status Commands (Immediate/Query)
+
+| Command | Name | Description | Response Example |
+|---------|------|-------------|------------------|
+| **EP** | Encoder Position | Returns current encoder position in steps | `EP=12345` |
+| **IP** | Immediate Position | Returns commanded position in steps | `IP=12345` |
+| **IV** | Immediate Velocity | Returns current velocity | `IV=0.00` |
+| **SC** | Status Code | Returns drive status as hex code | `SC=0001` |
+| **AL** | Alarm Code | Returns alarm status as hex code | `AL=0000` |
+| **AR** | Alarm Reset | Clears any active alarms | `%` (success) |
+
+### Status Code (SC) Bit Definitions
+- Bit 0 (0x0001): Motor Enabled
+- Bit 1 (0x0002): Sampling (in motion)
+- Bit 2 (0x0004): Drive Fault
+- Bit 3 (0x0008): In Position
+- Bit 4 (0x0010): Moving
+- Bit 5 (0x0020): Jogging
+- Bit 6 (0x0040): Stopping
+- Bit 7 (0x0080): Waiting
+- Bit 8 (0x0100): Saving
+- Bit 9 (0x0200): Alarm Present
+- Bit 10 (0x0400): Homing
+- Bit 11 (0x0800): Wait for Input
+- Bit 12 (0x1000): Motion Command Processing
+- Bit 13 (0x2000): In Q Program
+- Bit 14 (0x4000): Initializing
+- Bit 15 (0x8000): Reserved
+
+### Common Alarm Codes (AL)
+- `0000`: No alarm
+- `0002`: Position Limit
+- `0004`: CCW Limit
+- `0008`: CW Limit
+- `0010`: Over Temp
+- `0020`: Internal Voltage Fault
+- `0040`: Over Voltage
+- `0080`: Under Voltage
+- `0100`: Over Current
+- `0200`: Open Motor Winding
+- `0400`: Bad Encoder
+- `0800`: Communication Error
+- `1000`: Bad Flash
+- `2000`: No Move
+- `4000`: Reserved
+- `8000`: Reserved
+
+## Info Commands
+
+| Command | Name | Description | Response Example |
+|---------|------|-------------|------------------|
+| **RV** | Revision Level | Returns firmware revision | `RV=102` |
+| **MV** | Model & Version | Returns model info | `MV=102I083` |
+
+## Response Characters
+- `%` - Command accepted/success
+- `?` - Command error/rejected
+- `*` - Command buffered (for buffered commands)
+
+## Python Usage (from stac5_manager.py)
+
+```python
+# Build packet
+def build_packet(command: str) -> bytes:
+    HEADER = bytes([0x00, 0x07])
+    CR = bytes([0x0D])
+    return HEADER + command.encode('ascii') + CR
+
+# Example: Jog right (positive) at 2 rev/sec
+# NOTE: SD doesn't work on STAC5-IP, use DI to set direction instead
+send_command("DI1")          # Set direction positive (1 step)
+send_command("JS2.0")        # Jog speed (MUST have decimal!)
+send_command("CJ")           # Commence jogging (smooth continuous)
+# ... later ...
+send_command("SJ")           # Stop jogging
+
+# Example: Jog left (negative) at 2 rev/sec
+send_command("DI-1")         # Set direction negative (-1 step)
+send_command("JS2.0")        # Jog speed
+send_command("CJ")           # Commence jogging
+# ... later ...
+send_command("SJ")           # Stop jogging
+
+# Example: Move 4000 steps positive (use signed DI)
+send_command("VE1.5")  # Velocity 1.5 rev/sec (MUST have decimal!)
+send_command("DI4000") # Positive distance = positive direction
+send_command("FL")     # Execute move
+
+# Example: Move 4000 steps negative (use signed DI)
+send_command("VE1.5")  # Velocity
+send_command("DI-4000") # Negative distance = negative direction
+send_command("FL")     # Execute move
+
+# Example: Read encoder
+response = send_command("EP")  # Returns "EP=12345" or "EP=-12345"
+```
+
+---
+
+# Full Command Reference (PDF Navigation) 
 
 Host Command Reference
 Contents
