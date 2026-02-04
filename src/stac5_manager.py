@@ -65,6 +65,10 @@ class STAC5Manager:
         self.default_acceleration = 10.0   # rev/sec^2
         self.default_deceleration = 10.0   # rev/sec^2
 
+        # Electronic gearing ratio (EG/ER = 20000/8000 = 2.5)
+        # Motor steps = encoder counts * gear_ratio
+        self.gear_ratio = 2.5
+
     def set_status_callback(self, callback: Callable[[STAC5Status], None]):
         """Set callback for status updates."""
         self._status_callback = callback
@@ -144,6 +148,11 @@ class STAC5Manager:
 
     def connect(self) -> bool:
         """Connect to the STAC5 controller."""
+        # Clean up any previous connection
+        if self._connected or self.socket:
+            print("[STAC5] Cleaning up previous connection...")
+            self.disconnect()
+
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(5.0)
@@ -174,7 +183,13 @@ class STAC5Manager:
                 pass
         self.socket = None
         self._connected = False
+        # Reset all status flags
         self.status.connected = False
+        self.status.is_moving = False
+        self.status.motor_enabled = False
+        self.status.alarm_code = "0000"
+        self.status.status_code = "0000"
+        self.status.encoder_position = 0
         print("[STAC5] Disconnected")
 
     def is_connected(self) -> bool:
@@ -188,10 +203,26 @@ class STAC5Manager:
         self.send_command("ME")  # Motor Enable
         self.status.motor_enabled = True
 
+        # Sync internal position (SP) to encoder position (EP)
+        # This is required for FP (Feed to Position) to work correctly
+        self._sync_positions()
+
         # Note: Network watchdog commands (ZS, ZE, ZA) are not supported on
         # the STAC5-IP-E120. Safety is provided by using incremental jogging
         # (small FL moves) instead of continuous jogging. If communication
         # fails, motor only travels one small increment before stopping.
+
+    def _encoder_to_motor(self, encoder_counts: int) -> int:
+        """Convert encoder counts to motor steps using gear ratio."""
+        return int(encoder_counts * self.gear_ratio)
+
+    def _sync_positions(self):
+        """Sync internal step position (SP) to encoder position (EP)."""
+        ep = self.get_encoder_position()
+        if ep is not None:
+            motor_steps = self._encoder_to_motor(ep)
+            self.send_command(f"SP{motor_steps}")
+            print(f"[STAC5] Synced SP to EP: encoder={ep}, motor={motor_steps}")
 
     def send_command(self, command: str, timeout: float = 1.0) -> Optional[str]:
         """
@@ -425,16 +456,31 @@ class STAC5Manager:
         return False
 
     def move_to_position(self, target_steps: int) -> bool:
-        """Move to an absolute position."""
+        """Move to an absolute encoder position using FP command."""
         current = self.get_encoder_position()
-        if current is None:
-            return False
+        print(f"[STAC5] Move to position: target={target_steps}, current={current}")
 
-        distance = target_steps - current
-        if distance == 0:
+        if current is not None and current == target_steps:
+            print("[STAC5] Already at target position")
             return True
 
-        return self.move_relative(distance)
+        # Sync SP to current encoder position (scaled to motor steps)
+        self._sync_positions()
+
+        # Convert target encoder position to motor steps
+        target_motor = self._encoder_to_motor(target_steps)
+
+        # Set velocity
+        self.send_command(f"VE{self.status.move_velocity:.1f}")
+
+        # Use FP (Feed to Position) for absolute positioning in motor steps
+        response = self.send_command(f"FP{target_motor}")
+        print(f"[STAC5] FP{target_motor} (encoder target: {target_steps}) response: {response}")
+
+        if response is not None:
+            self.status.is_moving = True
+            return True
+        return False
 
     def set_move_velocity(self, rps: float) -> bool:
         """Set move velocity in rev/sec."""
@@ -467,14 +513,18 @@ class STAC5Manager:
 
     def go_home(self) -> bool:
         """Move to saved home position."""
+        print(f"[STAC5] Go Home called - saved position: {self.status.home_position}")
         if self.status.home_position is not None:
             return self.move_to_position(self.status.home_position)
+        print("[STAC5] Go Home failed - no home position saved")
         return False
 
     def go_well(self) -> bool:
         """Move to saved well position."""
+        print(f"[STAC5] Go Well called - saved position: {self.status.well_position}")
         if self.status.well_position is not None:
             return self.move_to_position(self.status.well_position)
+        print("[STAC5] Go Well failed - no well position saved")
         return False
 
     def zero_encoder(self) -> bool:
@@ -492,8 +542,10 @@ class STAC5Manager:
 
     def start_polling(self, interval: float = 0.15):
         """Start polling for status updates."""
-        if self._polling:
-            return
+        # Make sure any previous polling is fully stopped
+        if self._polling or self._poll_thread is not None:
+            print("[STAC5] Stopping previous polling before starting new...")
+            self.stop_polling()
 
         self._poll_interval = interval
         self._polling = True
@@ -505,13 +557,16 @@ class STAC5Manager:
         """Stop polling for status updates."""
         self._polling = False
         if self._poll_thread:
-            self._poll_thread.join(timeout=1.0)
+            self._poll_thread.join(timeout=2.0)
+            if self._poll_thread.is_alive():
+                print("[STAC5] Warning: Poll thread did not stop cleanly")
             self._poll_thread = None
         print("[STAC5] Stopped polling")
 
     def _poll_loop(self):
         """Background polling loop."""
         last_alarm = "0000"  # Track last alarm to detect new faults
+        print("[STAC5] Poll loop started")
 
         while self._polling and self._connected:
             try:
@@ -524,10 +579,12 @@ class STAC5Manager:
                 sc = self.get_status_code()
                 if sc:
                     self.status.status_code = sc
-                    # Bit 0 of status code indicates motor enabled
                     try:
                         sc_int = int(sc, 16)
+                        # Bit 0: Motor enabled
                         self.status.motor_enabled = bool(sc_int & 0x0001)
+                        # Bit 4 (0x0010): Moving/In Motion
+                        self.status.is_moving = bool(sc_int & 0x0010)
                     except:
                         pass
 
@@ -549,6 +606,8 @@ class STAC5Manager:
                 print(f"[STAC5] Poll error: {e}")
 
             time.sleep(self._poll_interval)
+
+        print(f"[STAC5] Poll loop exited (polling={self._polling}, connected={self._connected})")
 
     def poll_once(self) -> STAC5Status:
         """Poll status once (blocking)."""
