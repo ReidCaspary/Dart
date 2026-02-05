@@ -23,6 +23,221 @@ MODE_COLORS = {
 }
 
 
+class PositionSlider(tk.Frame):
+    """
+    Visual slider showing position between HOME and WELL.
+
+    Features:
+    - Gradient track from HOME to WELL
+    - Glowing position indicator
+    """
+
+    TRACK_HEIGHT = 16
+    INDICATOR_SIZE = 28
+    DEST_TOLERANCE = 100  # Steps tolerance for "at destination"
+
+    def __init__(self, parent, height=70, **kwargs):
+        super().__init__(parent, bg=COLORS['bg_dark'], **kwargs)
+
+        self._height = height
+        self._home_pos = None
+        self._well_pos = None
+        self._current_pos = None
+        self._last_fraction = 0.5
+        self._at_destination = False
+        self._destination_name = None
+
+        # Create border frame
+        self._border = tk.Frame(self, bg=COLORS['border'], padx=1, pady=1)
+        self._border.pack(fill='x', padx=8, pady=4)
+
+        # Create inner panel
+        self._panel = tk.Frame(self._border, bg=COLORS['bg_panel'])
+        self._panel.pack(fill='x')
+
+        # Create canvas for slider
+        self._canvas = tk.Canvas(
+            self._panel, height=height,
+            bg=COLORS['bg_panel'], highlightthickness=0
+        )
+        self._canvas.pack(fill='x', padx=8, pady=8)
+
+        # Bind resize event
+        self._canvas.bind('<Configure>', self._on_resize)
+
+        # Track geometry (will be updated on resize)
+        self._track_left = 80
+        self._track_right = 200
+        self._track_width = self._track_right - self._track_left
+        self._track_y = height // 2
+
+    def _on_resize(self, event):
+        """Handle canvas resize."""
+        width = event.width
+        if width > 100:
+            self._track_left = 80
+            self._track_right = width - 80
+            self._track_width = self._track_right - self._track_left
+            self._redraw()
+
+    def _redraw(self):
+        """Redraw everything."""
+        self._canvas.delete('all')
+        self._draw_static()
+        self._draw_indicator(self._last_fraction)
+
+    def _draw_static(self):
+        """Draw static elements (track, labels)."""
+        c = self._canvas
+
+        # Track background (dark recessed look)
+        c.create_rectangle(
+            self._track_left - 2, self._track_y - self.TRACK_HEIGHT//2 - 2,
+            self._track_right + 2, self._track_y + self.TRACK_HEIGHT//2 + 2,
+            fill=COLORS['bg_dark'], outline=COLORS['border'], width=1
+        )
+
+        # Track gradient (blue to cyan)
+        steps = 30
+        for i in range(steps):
+            x1 = self._track_left + (self._track_width * i // steps)
+            x2 = self._track_left + (self._track_width * (i + 1) // steps)
+            # Interpolate color from dark blue to cyan
+            r = int(30 + (0 - 30) * i / steps)
+            g = int(60 + (180 - 60) * i / steps)
+            b = int(120 + (220 - 120) * i / steps)
+            color = f'#{r:02x}{g:02x}{b:02x}'
+            c.create_rectangle(
+                x1, self._track_y - self.TRACK_HEIGHT//2,
+                x2, self._track_y + self.TRACK_HEIGHT//2,
+                fill=color, outline=''
+            )
+
+        # HOME label (left)
+        c.create_text(
+            self._track_left - 10, self._track_y,
+            text="HOME", font=FONTS['heading'], fill=COLORS['accent_green'],
+            anchor='e'
+        )
+
+        # WELL label (right)
+        c.create_text(
+            self._track_right + 10, self._track_y,
+            text="WELL", font=FONTS['heading'], fill=COLORS['accent_cyan'],
+            anchor='w'
+        )
+
+        # Home marker
+        c.create_line(
+            self._track_left, self._track_y - self.TRACK_HEIGHT//2 - 6,
+            self._track_left, self._track_y + self.TRACK_HEIGHT//2 + 6,
+            fill=COLORS['accent_green'], width=3
+        )
+
+        # Well marker
+        c.create_line(
+            self._track_right, self._track_y - self.TRACK_HEIGHT//2 - 6,
+            self._track_right, self._track_y + self.TRACK_HEIGHT//2 + 6,
+            fill=COLORS['accent_cyan'], width=3
+        )
+
+    def _draw_indicator(self, fraction: float):
+        """Draw the position indicator at given fraction (0=home, 1=well)."""
+        c = self._canvas
+
+        # Delete old indicator elements
+        c.delete('indicator')
+        c.delete('glow')
+
+        # Store for redraw
+        self._last_fraction = fraction
+
+        # Clamp fraction
+        fraction = max(0.0, min(1.0, fraction))
+
+        # Calculate x position
+        x = self._track_left + (self._track_width * fraction)
+        y = self._track_y
+
+        # Determine indicator color based on position and movement
+        if self._at_destination:
+            indicator_color = '#00ff00'
+            glow_color = '#00ff00'
+        else:
+            # Gradient from green (home) to cyan (well)
+            r = int(0 + (0 - 0) * fraction)
+            g = int(255 + (200 - 255) * fraction)
+            b = int(100 + (255 - 100) * fraction)
+            indicator_color = f'#{r:02x}{g:02x}{b:02x}'
+            glow_color = indicator_color
+
+        # Draw glow effect (multiple rings for glow look)
+        for i in range(4, 0, -1):
+            size = self.INDICATOR_SIZE//2 + i * 4
+            c.create_oval(
+                x - size, y - size,
+                x + size, y + size,
+                fill='', outline=glow_color, width=2,
+                tags='glow'
+            )
+
+        # Draw main indicator (filled circle)
+        size = self.INDICATOR_SIZE // 2
+        c.create_oval(
+            x - size, y - size,
+            x + size, y + size,
+            fill=indicator_color, outline='#ffffff', width=2,
+            tags='indicator'
+        )
+
+        # Draw inner highlight
+        inner_size = size - 5
+        c.create_oval(
+            x - inner_size, y - inner_size,
+            x + inner_size//2, y - 2,
+            fill='#ffffff', outline='',
+            tags='indicator'
+        )
+
+    def update_position(self, current: int, home: Optional[int], well: Optional[int]):
+        """Update the slider with new position data."""
+        self._current_pos = current
+        self._home_pos = home
+        self._well_pos = well
+
+        # Check if at destination
+        self._at_destination = False
+        self._destination_name = None
+
+        if home is not None and abs(current - home) <= self.DEST_TOLERANCE:
+            self._at_destination = True
+            self._destination_name = "HOME"
+        elif well is not None and abs(current - well) <= self.DEST_TOLERANCE:
+            self._at_destination = True
+            self._destination_name = "WELL"
+
+        # Calculate fraction (0 = home, 1 = well)
+        if home is not None and well is not None and home != well:
+            fraction = (current - home) / (well - home)
+        elif home is not None:
+            fraction = 0.0
+        elif well is not None:
+            fraction = 1.0
+        else:
+            fraction = 0.5
+
+        self._draw_indicator(fraction)
+
+    def set_disconnected(self):
+        """Show disconnected state."""
+        self._home_pos = None
+        self._well_pos = None
+        self._current_pos = None
+        self._at_destination = False
+        self._destination_name = None
+        self._draw_indicator(0.5)
+
+
 class PositionDisplay(tk.Frame):
     """
     Widget displaying current position, speed, and motion mode.

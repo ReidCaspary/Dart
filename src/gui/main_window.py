@@ -26,7 +26,7 @@ from ..wifi_manager import DropCylinderManager, DropCylinderConnectionState, Con
 from ..drop_cylinder_protocol import DropCylinderStatus
 from ..command_protocol import WinchStatus, MotionMode
 from ..stac5_manager import STAC5Manager, STAC5Status
-from .position_display import PositionDisplay
+from .position_display import PositionDisplay, PositionSlider
 from .control_panel import ControlPanel
 from .settings_panel import SettingsPanel
 from .status_bar import StatusBar
@@ -102,7 +102,7 @@ class MainWindow:
         # Configure grid for two-column layout
         self._root.columnconfigure(0, weight=0)  # Left column (controls) - fixed
         self._root.columnconfigure(1, weight=1)  # Right column (cameras) - expandable
-        self._root.rowconfigure(5, weight=1)     # Let the camera row expand
+        self._root.rowconfigure(6, weight=1)     # Let the camera row expand
 
         # Connection Bar (spans all columns)
         self._create_connection_bar()
@@ -112,11 +112,15 @@ class MainWindow:
             row=1, column=0, columnspan=2, sticky="ew", pady=2
         )
 
+        # === POSITION SLIDER (spans both columns) ===
+        self._position_slider = PositionSlider(self._root, height=70)
+        self._position_slider.grid(row=2, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
+
         # === LEFT COLUMN (Controls) ===
 
         # Position Display
         self._position_display = PositionDisplay(self._root)
-        self._position_display.grid(row=2, column=0, sticky="ew", padx=5, pady=2)
+        self._position_display.grid(row=3, column=0, sticky="ew", padx=5, pady=2)
 
         # Control Panel
         self._control_panel = ControlPanel(
@@ -131,7 +135,7 @@ class MainWindow:
             on_go_to=self._on_go_to,
             on_move_relative=self._on_move_relative
         )
-        self._control_panel.grid(row=3, column=0, sticky="ew", padx=5, pady=2)
+        self._control_panel.grid(row=4, column=0, sticky="ew", padx=5, pady=2)
 
         # Settings Panel
         self._settings_panel = SettingsPanel(
@@ -141,7 +145,7 @@ class MainWindow:
             on_zero_position=self._on_zero_position,
             on_clear_fault=self._on_clear_fault
         )
-        self._settings_panel.grid(row=4, column=0, sticky="ew", padx=5, pady=2)
+        self._settings_panel.grid(row=5, column=0, sticky="ew", padx=5, pady=2)
 
         # Drop Cylinder Panel
         self._drop_cylinder_panel = DropCylinderPanel(
@@ -164,13 +168,13 @@ class MainWindow:
             on_configure_wifi=self._on_drop_configure_wifi,
             on_test=self._on_drop_test
         )
-        self._drop_cylinder_panel.grid(row=5, column=0, sticky="new", padx=5, pady=2)
+        self._drop_cylinder_panel.grid(row=6, column=0, sticky="new", padx=5, pady=2)
 
         # === RIGHT COLUMN (Cameras in container) ===
 
         # Container frame for cameras (anchored top-left, no stretching)
         camera_container = tk.Frame(self._root, bg=COLORS['bg_dark'])
-        camera_container.grid(row=2, column=1, rowspan=4, sticky="nw", padx=5, pady=2)
+        camera_container.grid(row=3, column=1, rowspan=4, sticky="nw", padx=5, pady=2)
 
         # Camera Panel 1 (fixed size, no expand)
         self._camera_panel = CameraPanel(camera_container)
@@ -184,7 +188,7 @@ class MainWindow:
 
         # Status Bar
         self._status_bar = StatusBar(self._root)
-        self._status_bar.grid(row=6, column=0, columnspan=2, sticky="ew", padx=5, pady=2)
+        self._status_bar.grid(row=7, column=0, columnspan=2, sticky="ew", padx=5, pady=2)
 
     def _create_connection_bar(self) -> None:
         """Create the connection controls bar with STAC5 and legacy serial options."""
@@ -433,6 +437,7 @@ class MainWindow:
             self._update_controls_state()
             self._status_bar.set_connection_state(ConnectionState.DISCONNECTED, "STAC5 Disconnected")
             self._position_display.set_disconnected()
+            self._position_slider.set_disconnected()
         else:
             ip = self._stac5_ip_var.get().strip()
             try:
@@ -514,6 +519,14 @@ class MainWindow:
         self._position_display.update_status(compat_status)
         self._settings_panel.update_home_position(status.home_position is not None, status.home_position or 0)
         self._settings_panel.update_well_position(status.well_position is not None, status.well_position or 0)
+
+        # Update position slider
+        self._position_slider.update_position(
+            status.encoder_position,
+            status.home_position,
+            status.well_position
+        )
+
         self._update_controls_state()
 
     def _on_stac5_error(self, message: str) -> None:
@@ -569,6 +582,7 @@ class MainWindow:
 
         if state == ConnectionState.DISCONNECTED:
             self._position_display.set_disconnected()
+            self._position_slider.set_disconnected()
             self._status_bar.set_estop_active(False)
 
     def _show_error(self, message: str) -> None:
@@ -608,14 +622,18 @@ class MainWindow:
     def _on_go_home(self) -> None:
         """Handle go home button."""
         if self._stac5_manager.is_connected():
-            self._stac5_manager.go_home()
+            # Run in background to avoid blocking polling/GUI updates
+            import threading
+            threading.Thread(target=self._stac5_manager.go_home, daemon=True).start()
         else:
             self._serial_manager.go_home()
 
     def _on_go_well(self) -> None:
         """Handle go well button."""
         if self._stac5_manager.is_connected():
-            self._stac5_manager.go_well()
+            # Run in background to avoid blocking polling/GUI updates
+            import threading
+            threading.Thread(target=self._stac5_manager.go_well, daemon=True).start()
         else:
             self._serial_manager.go_well()
 
@@ -629,14 +647,18 @@ class MainWindow:
     def _on_go_to(self, steps: int) -> None:
         """Handle go to absolute position."""
         if self._stac5_manager.is_connected():
-            self._stac5_manager.move_to_position(steps)
+            # Run in background to avoid blocking polling/GUI updates
+            import threading
+            threading.Thread(target=self._stac5_manager.move_to_position, args=(steps,), daemon=True).start()
         else:
             self._serial_manager.go_to_position(steps)
 
     def _on_move_relative(self, steps: int) -> None:
         """Handle relative move."""
         if self._stac5_manager.is_connected():
-            self._stac5_manager.move_relative(steps)
+            # Run in background to avoid blocking polling/GUI updates
+            import threading
+            threading.Thread(target=self._stac5_manager.move_relative, args=(steps,), daemon=True).start()
         else:
             self._serial_manager.move_relative(steps)
 
