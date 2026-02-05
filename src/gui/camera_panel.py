@@ -43,6 +43,9 @@ class CameraPanel(tk.Frame):
     SIZES = CAMERA_DISPLAY_SIZES
     DEFAULT_SIZE = CAMERA_DEFAULT_SIZE
 
+    # Throttle display updates to ~10 FPS (100ms) to reduce GUI load
+    DISPLAY_INTERVAL_MS = 100
+
     def __init__(self, parent, title="Camera", default_ip="", **kwargs):
         super().__init__(parent, bg=COLORS['bg_dark'], **kwargs)
 
@@ -62,6 +65,11 @@ class CameraPanel(tk.Frame):
         self._discovered_ips: List[str] = []
         self._scan_thread: Optional[threading.Thread] = None
         self._settings_popup = None
+
+        # Frame throttling
+        self._last_display_time = 0
+        self._pending_frame: Optional[bytes] = None
+        self._display_scheduled = False
 
         # StringVars persist across popup open/close
         self._ip_var = tk.StringVar(value=default_ip)
@@ -363,14 +371,42 @@ class CameraPanel(tk.Frame):
     # === Frame Display ===
 
     def _on_frame_received(self, frame_data: bytes):
+        """Called from stream thread - store frame and schedule throttled display."""
         self._current_frame = frame_data
-        self.after(0, self._display_frame_data, frame_data)
+        self._pending_frame = frame_data
+
+        # Only schedule one display update at a time
+        if not self._display_scheduled:
+            self._display_scheduled = True
+            self.after(0, self._maybe_display_frame)
+
+    def _maybe_display_frame(self):
+        """Check if enough time has passed and display the latest frame."""
+        self._display_scheduled = False
+
+        if not self._pending_frame:
+            return
+
+        now = time.time() * 1000
+        elapsed = now - self._last_display_time
+
+        if elapsed >= self.DISPLAY_INTERVAL_MS:
+            # Enough time passed - display the frame
+            self._display_frame_data(self._pending_frame)
+            self._last_display_time = now
+            self._pending_frame = None
+        else:
+            # Too soon - schedule for later
+            wait_ms = int(self.DISPLAY_INTERVAL_MS - elapsed) + 1
+            self._display_scheduled = True
+            self.after(wait_ms, self._maybe_display_frame)
 
     def _display_frame_data(self, frame_data: bytes):
         try:
             image = Image.open(io.BytesIO(frame_data))
             if self._display_size:
-                image = image.resize(self._display_size, Image.Resampling.LANCZOS)
+                # Use BILINEAR for speed (LANCZOS is slow)
+                image = image.resize(self._display_size, Image.Resampling.BILINEAR)
             else:
                 container_w = self._display_frame.winfo_width()
                 container_h = self._display_frame.winfo_height()
@@ -378,7 +414,7 @@ class CameraPanel(tk.Frame):
                     img_w, img_h = image.size
                     scale = min(container_w / img_w, container_h / img_h)
                     new_size = (int(img_w * scale), int(img_h * scale))
-                    image = image.resize(new_size, Image.Resampling.LANCZOS)
+                    image = image.resize(new_size, Image.Resampling.BILINEAR)
 
             self._photo_image = ImageTk.PhotoImage(image)
             self._video_label.configure(image=self._photo_image, text='')
@@ -482,6 +518,9 @@ class TapoCameraPanel(tk.Frame):
         'Low (360p)': 'stream2',
     }
 
+    # Throttle display updates to ~10 FPS (100ms) to reduce GUI load
+    DISPLAY_INTERVAL_MS = 100
+
     def __init__(self, parent, title="TAPO Camera", default_ip="", default_user="", default_pass="", **kwargs):
         super().__init__(parent, bg=COLORS['bg_dark'], **kwargs)
 
@@ -496,6 +535,11 @@ class TapoCameraPanel(tk.Frame):
         self._current_frame: Optional[bytes] = None
         self._photo_image: Optional[ImageTk.PhotoImage] = None
         self._display_size = self.SIZES[self.DEFAULT_SIZE]
+
+        # Frame throttling
+        self._last_display_time = 0
+        self._pending_frame: Optional[bytes] = None
+        self._display_scheduled = False
         self._settings_popup = None
 
         # StringVars persist across popup open/close
@@ -744,14 +788,42 @@ class TapoCameraPanel(tk.Frame):
     # === Frame Display ===
 
     def _on_frame_received(self, frame_data: bytes):
+        """Called from stream thread - store frame and schedule throttled display."""
         self._current_frame = frame_data
-        self.after(0, self._display_frame_data, frame_data)
+        self._pending_frame = frame_data
+
+        # Only schedule one display update at a time
+        if not self._display_scheduled:
+            self._display_scheduled = True
+            self.after(0, self._maybe_display_frame)
+
+    def _maybe_display_frame(self):
+        """Check if enough time has passed and display the latest frame."""
+        self._display_scheduled = False
+
+        if not self._pending_frame:
+            return
+
+        now = time.time() * 1000
+        elapsed = now - self._last_display_time
+
+        if elapsed >= self.DISPLAY_INTERVAL_MS:
+            # Enough time passed - display the frame
+            self._display_frame_data(self._pending_frame)
+            self._last_display_time = now
+            self._pending_frame = None
+        else:
+            # Too soon - schedule for later
+            wait_ms = int(self.DISPLAY_INTERVAL_MS - elapsed) + 1
+            self._display_scheduled = True
+            self.after(wait_ms, self._maybe_display_frame)
 
     def _display_frame_data(self, frame_data: bytes):
         try:
             image = Image.open(io.BytesIO(frame_data))
             if self._display_size:
-                image = image.resize(self._display_size, Image.Resampling.LANCZOS)
+                # Use BILINEAR for speed (LANCZOS is slow)
+                image = image.resize(self._display_size, Image.Resampling.BILINEAR)
 
             self._photo_image = ImageTk.PhotoImage(image)
             self._video_label.configure(image=self._photo_image, text='')

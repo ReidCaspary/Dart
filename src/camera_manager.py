@@ -241,11 +241,14 @@ class RTSPStreamReader:
     Reads RTSP stream (e.g. from TAPO cameras) using OpenCV and provides
     JPEG frames via callback. Same interface as MJPEGStreamReader.
 
-    Optimized for low latency:
-    - Uses TCP transport for reliability
-    - Minimal buffer size to reduce delay
-    - Grabs frames without decoding, then retrieves only the latest
+    Optimized for low latency and low CPU:
+    - Minimal buffer size
+    - Throttled to ~10 FPS to reduce CPU load
+    - Drops frames if callback can't keep up
     """
+
+    # Target ~10 FPS to reduce CPU load (100ms between frames)
+    FRAME_INTERVAL_MS = 100
 
     def __init__(
         self,
@@ -284,6 +287,8 @@ class RTSPStreamReader:
                 self._on_error("OpenCV not installed. Run: pip install opencv-python")
             return
 
+        import time
+
         cap = None
         try:
             # Configure for low latency
@@ -292,33 +297,39 @@ class RTSPStreamReader:
             # Minimal buffer - only keep 1 frame
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-            # Use TCP transport (more reliable, often lower latency than UDP)
-            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-
             if not cap.isOpened():
                 if self._running:
                     self._on_error("Could not open RTSP stream")
                 return
 
-            while self._running:
-                # Grab multiple frames to clear buffer, keep only latest
-                # This prevents lag buildup from buffered frames
-                for _ in range(2):
-                    cap.grab()
+            last_frame_time = 0
 
-                # Now retrieve the latest frame
+            while self._running:
+                # Throttle frame rate
+                now = time.time() * 1000
+                elapsed = now - last_frame_time
+                if elapsed < self.FRAME_INTERVAL_MS:
+                    # Grab and discard to keep stream current, but don't process
+                    cap.grab()
+                    time.sleep(0.01)  # Small sleep to prevent busy-wait
+                    continue
+
+                # Grab to clear any buffered frames
+                cap.grab()
+
+                # Retrieve the latest frame
                 ret, frame = cap.retrieve()
                 if not ret:
-                    # Try a regular read as fallback
                     ret, frame = cap.read()
                     if not ret:
                         if self._running:
                             self._on_error("Stream lost - no frame received")
                         break
 
-                # Encode with lower quality for speed (80% quality)
-                encode_params = [cv2.IMWRITE_JPEG_QUALITY, 80]
+                last_frame_time = now
+
+                # Encode with lower quality for speed
+                encode_params = [cv2.IMWRITE_JPEG_QUALITY, 70]
                 _, jpeg = cv2.imencode('.jpg', frame, encode_params)
                 if self._running:
                     self._on_frame(jpeg.tobytes())
