@@ -69,6 +69,18 @@ class STAC5Manager:
         # Motor steps = encoder counts * gear_ratio
         self.gear_ratio = 2.5
 
+        # Track when last move command was sent for fast polling
+        self._last_move_time = 0.0
+
+        # Rate limiting - minimum time between move commands (seconds)
+        self._min_command_interval = 0.5  # 500ms between move commands
+        self._last_move_command_time = 0.0
+
+        # Jog state tracking
+        self._jog_active = False  # True when jog is running
+        self._jog_stop_time = 0.0  # When jog stop was sent
+        self._jog_decel_lockout = 0.5  # Lockout period after jog stop (seconds)
+
     def set_status_callback(self, callback: Callable[[STAC5Status], None]):
         """Set callback for status updates."""
         self._status_callback = callback
@@ -254,7 +266,7 @@ class STAC5Manager:
                 self.socket.sendall(packet)
 
                 # Small delay to let response arrive
-                time.sleep(0.05)
+                time.sleep(0.01)  # Reduced from 50ms to 10ms for faster polling
 
                 # Read response
                 self.socket.settimeout(timeout)
@@ -287,7 +299,7 @@ class STAC5Manager:
     # =========================================================================
 
     def get_encoder_position(self) -> Optional[int]:
-        """Read current encoder position."""
+        """Read current encoder position (use when drive is idle)."""
         response = self.send_command("EP")
         if response:
             try:
@@ -305,6 +317,28 @@ class STAC5Manager:
                     clean = response.replace("=", "").replace("EP", "")
                     clean = clean.replace("%", "").replace("?", "").replace("*", "").strip()
                     # Take first number if multiple
+                    parts = clean.split()
+                    if parts:
+                        return int(parts[0])
+            except ValueError:
+                pass
+        return None
+
+    def get_immediate_encoder(self) -> Optional[int]:
+        """Read encoder position using Immediate Encoder command (works during motion)."""
+        response = self.send_command("IE")
+        if response:
+            try:
+                # Response format: "IE=12345"
+                if "IE=" in response:
+                    idx = response.find("IE=") + 3
+                    end = idx
+                    while end < len(response) and (response[end].isdigit() or response[end] == '-'):
+                        end += 1
+                    return int(response[idx:end])
+                else:
+                    clean = response.replace("=", "").replace("IE", "")
+                    clean = clean.replace("%", "").replace("?", "").replace("*", "").strip()
                     parts = clean.split()
                     if parts:
                         return int(parts[0])
@@ -385,12 +419,16 @@ class STAC5Manager:
     def stop(self) -> bool:
         """Stop motion (controlled deceleration)."""
         response = self.send_command("ST")
+        self._jog_active = False
+        self._jog_stop_time = time.time()  # Start lockout period
         self.status.is_moving = False
         return response is not None
 
     def stop_kill(self) -> bool:
         """Emergency stop (immediate)."""
         response = self.send_command("SK")
+        self._jog_active = False
+        self._jog_stop_time = time.time()
         self.status.is_moving = False
         return response is not None
 
@@ -409,6 +447,21 @@ class STAC5Manager:
         Args:
             direction: 1 = positive (CW), -1 = negative (CCW)
         """
+        # Don't start if already jogging
+        if self._jog_active:
+            print("[STAC5] Jog start ignored - already jogging")
+            return False
+
+        # Lockout period after jog stop to allow deceleration
+        now = time.time()
+        time_since_stop = now - self._jog_stop_time
+        if time_since_stop < self._jog_decel_lockout:
+            print(f"[STAC5] Jog start ignored - lockout ({time_since_stop:.2f}s < {self._jog_decel_lockout}s)")
+            return False
+
+        # Mark as active BEFORE sending commands to prevent race conditions
+        self._jog_active = True
+
         # Set direction using DI command (DI1 = positive, DI-1 = negative)
         dir_cmd = "DI1" if direction >= 0 else "DI-1"
         self.send_command(dir_cmd)
@@ -420,14 +473,24 @@ class STAC5Manager:
         response = self.send_command("CJ")
         if response is not None:
             self.status.is_moving = True
+            self._last_move_time = time.time()  # Trigger fast polling
             return True
-        return False
+        else:
+            # Failed to start, reset state
+            self._jog_active = False
+            return False
 
     def jog_stop(self) -> bool:
         """Stop jogging (decelerate to stop)."""
-        response = self.send_command("SJ")
+        # Clear state FIRST to prevent any race conditions
+        self._jog_active = False
+        self._jog_stop_time = time.time()
         self.status.is_moving = False
-        return response is not None
+
+        # Send SJ to decelerate to stop (don't use ST - that's immediate stop)
+        self.send_command("SJ")
+
+        return True
 
     def set_jog_velocity(self, rps: float) -> bool:
         """Set jog velocity in rev/sec."""
@@ -442,6 +505,13 @@ class STAC5Manager:
 
     def move_relative(self, steps: int) -> bool:
         """Move relative number of steps."""
+        # Rate limiting - ignore if command sent too recently
+        now = time.time()
+        if now - self._last_move_command_time < self._min_command_interval:
+            print(f"[STAC5] Move command ignored - rate limited ({self._min_command_interval}s)")
+            return False
+        self._last_move_command_time = now
+
         # Set velocity (always positive, with decimal point for compatibility)
         self.send_command(f"VE{self.status.move_velocity:.1f}")
 
@@ -452,11 +522,25 @@ class STAC5Manager:
         response = self.send_command("FL")
         if response is not None:
             self.status.is_moving = True
+            self._last_move_time = time.time()  # Trigger fast polling
             return True
         return False
 
     def move_to_position(self, target_steps: int) -> bool:
         """Move to an absolute encoder position using FP command."""
+        # Rate limiting - ignore if command sent too recently
+        now = time.time()
+        if now - self._last_move_command_time < self._min_command_interval:
+            print(f"[STAC5] Move command ignored - rate limited ({self._min_command_interval}s)")
+            return False
+        self._last_move_command_time = now
+
+        # Stop any current motion before starting new move
+        if self.status.is_moving:
+            print("[STAC5] Stopping current motion before new move")
+            self.send_command("ST")
+            time.sleep(0.05)  # Brief pause for stop to take effect
+
         current = self.get_encoder_position()
         print(f"[STAC5] Move to position: target={target_steps}, current={current}")
 
@@ -479,6 +563,7 @@ class STAC5Manager:
 
         if response is not None:
             self.status.is_moving = True
+            self._last_move_time = time.time()  # Trigger fast polling
             return True
         return False
 
@@ -566,38 +651,56 @@ class STAC5Manager:
     def _poll_loop(self):
         """Background polling loop."""
         last_alarm = "0000"  # Track last alarm to detect new faults
+        full_poll_counter = 0  # Counter for full status polls
         print("[STAC5] Poll loop started")
 
         while self._polling and self._connected:
+            # Check if we should be in fast polling mode
+            # Fast mode when: is_moving flag is set OR a move was started recently (within 3 seconds)
+            time_since_move = time.time() - self._last_move_time
+            in_motion_mode = self.status.is_moving or time_since_move < 3.0
+
             try:
                 # Read encoder position
-                pos = self.get_encoder_position()
+                # Use IE (Immediate Encoder) during motion - it works while drive is busy
+                # Use EP (Encoder Position) when idle - it's the standard command
+                if in_motion_mode:
+                    pos = self.get_immediate_encoder()
+                else:
+                    pos = self.get_encoder_position()
+
                 if pos is not None:
                     self.status.encoder_position = pos
 
-                # Read status code periodically
-                sc = self.get_status_code()
-                if sc:
-                    self.status.status_code = sc
-                    try:
-                        sc_int = int(sc, 16)
-                        # Bit 0: Motor enabled
-                        self.status.motor_enabled = bool(sc_int & 0x0001)
-                        # Bit 4 (0x0010): Moving/In Motion
-                        self.status.is_moving = bool(sc_int & 0x0010)
-                    except:
-                        pass
+                # Only read SC and AL every 5th cycle when in motion mode
+                # Always read when idle for full status
+                full_poll_counter += 1
+                if full_poll_counter >= 5 or not in_motion_mode:
+                    full_poll_counter = 0
 
-                # Read alarm code and detect new faults
-                al = self.get_alarm_code()
-                if al:
-                    self.status.alarm_code = al
-                    # Check if this is a new fault (non-zero and different from last)
-                    if al != "0000" and al != last_alarm:
-                        fault_msg = self._decode_alarm(al)
-                        print(f"[STAC5] FAULT DETECTED: {al} - {fault_msg}")
-                        self._notify_error(f"FAULT {al}: {fault_msg}")
-                    last_alarm = al
+                    # Read status code
+                    sc = self.get_status_code()
+                    if sc:
+                        self.status.status_code = sc
+                        try:
+                            sc_int = int(sc, 16)
+                            # Bit 0: Motor enabled
+                            self.status.motor_enabled = bool(sc_int & 0x0001)
+                            # Bit 4 (0x0010): Moving/In Motion
+                            self.status.is_moving = bool(sc_int & 0x0010)
+                        except:
+                            pass
+
+                    # Read alarm code and detect new faults
+                    al = self.get_alarm_code()
+                    if al:
+                        self.status.alarm_code = al
+                        # Check if this is a new fault (non-zero and different from last)
+                        if al != "0000" and al != last_alarm:
+                            fault_msg = self._decode_alarm(al)
+                            print(f"[STAC5] FAULT DETECTED: {al} - {fault_msg}")
+                            self._notify_error(f"FAULT {al}: {fault_msg}")
+                        last_alarm = al
 
                 # Notify callback
                 self._notify_status()
@@ -605,7 +708,11 @@ class STAC5Manager:
             except Exception as e:
                 print(f"[STAC5] Poll error: {e}")
 
-            time.sleep(self._poll_interval)
+            # Use shorter sleep when in motion mode for faster updates
+            if in_motion_mode:
+                time.sleep(0.03)  # 30ms when moving for ~30 updates/sec
+            else:
+                time.sleep(self._poll_interval)  # Normal interval when idle
 
         print(f"[STAC5] Poll loop exited (polling={self._polling}, connected={self._connected})")
 
