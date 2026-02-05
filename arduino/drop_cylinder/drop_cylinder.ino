@@ -34,6 +34,7 @@ const int SERVO_PIN = D2;  // PWM output to servo
 // PWM Configuration (Reef's 800is servo)
 // ============================================================================
 
+const int LEDC_CHANNEL = 0;        // LEDC channel for servo
 const int LEDC_RES = 14;           // 14-bit resolution
 const int SERVO_HZ = 50;           // 50 Hz (20ms period)
 const int PWM_MIN_US = 1000;       // 1.0ms = full CCW
@@ -54,11 +55,11 @@ float jogSpeed = 0.5f;             // 50% speed for jogging
 const char* DEFAULT_SSID = "Sharewell Wifi";
 const char* DEFAULT_PASS = "sharewell";
 
-// Static IP configuration (update gateway to match your network)
-IPAddress staticIP(172, 168, 168, 10);
-IPAddress gateway(172, 168, 168, 1);
+// Static IP configuration for Starlink network
+IPAddress staticIP(192, 168, 1, 10);
+IPAddress gateway(192, 168, 1, 1);
 IPAddress subnet(255, 255, 255, 0);
-IPAddress dns(172, 168, 168, 1);
+IPAddress dns(192, 168, 1, 1);
 
 // AP mode settings (fallback for configuration/discovery)
 const char* AP_SSID = "DartCylinder";
@@ -125,7 +126,7 @@ static inline uint32_t usToDuty(int us) {
 }
 
 void servoWriteUs(int us) {
-  ledcWrite(SERVO_PIN, usToDuty(us));
+  ledcWrite(LEDC_CHANNEL, usToDuty(us));
 }
 
 // ============================================================================
@@ -138,10 +139,10 @@ void setup() {
   Serial.print("Servo pin D2 = GPIO ");
   Serial.println(SERVO_PIN);
 
-  // Initialize LEDC PWM for servo
-  bool ok = ledcAttach(SERVO_PIN, SERVO_HZ, LEDC_RES);
-  Serial.print("ledcAttach: ");
-  Serial.println(ok ? "SUCCESS" : "FAILED");
+  // Initialize LEDC PWM for servo (older ESP32 core API)
+  ledcSetup(LEDC_CHANNEL, SERVO_HZ, LEDC_RES);
+  ledcAttachPin(SERVO_PIN, LEDC_CHANNEL);
+  Serial.println("LEDC PWM initialized");
 
   setServoStop();
 

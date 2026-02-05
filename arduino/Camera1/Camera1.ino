@@ -3,17 +3,17 @@
 #include "esp_http_server.h"
 
 // ================================
-// CAMERA 1 - Static IP: 192.168.4.20
+// CAMERA 1 - Static IP: 192.168.4.24
 // ================================
 // Starlink WiFi credentials
 const char* ssid = "Sharewell Wifi";
 const char* password = "sharewell";
 
-// Static IP configuration (update gateway to match your network)
-IPAddress staticIP(172, 168, 168, 20);
-IPAddress gateway(172, 168, 168, 1);
+// Static IP configuration for Starlink network
+IPAddress staticIP(192, 168, 1, 24);
+IPAddress gateway(192, 168, 1, 1);
 IPAddress subnet(255, 255, 255, 0);
-IPAddress dns(172, 168, 168, 1);
+IPAddress dns(192, 168, 1, 1);
 
 // ================================
 // AI-Thinker ESP32-CAM Pin Definitions
@@ -240,7 +240,7 @@ void setup() {
     Serial.println();
     Serial.println("================================");
     Serial.println("Camera 1 - Dart Delivery System");
-    Serial.println("Static IP: 172.168.168.20");
+    Serial.println("Static IP: 192.168.1.20");
     Serial.println("================================");
 
     // Setup flash LED

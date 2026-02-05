@@ -25,6 +25,8 @@ from ..camera_manager import (
 from ..config import (
     CAMERA_DISPLAY_SIZES,
     CAMERA_DEFAULT_SIZE,
+    CAMERA_1_HOST,
+    CAMERA_2_HOST,
 )
 from .theme import COLORS, FONTS
 from .widgets import ModernButton, ModernPanel, LEDIndicator
@@ -122,13 +124,13 @@ class CameraPanel(tk.Frame):
             bg=COLORS['bg_panel']
         ).pack(side='left', padx=(0, 6))
 
-        # IP combo/entry
-        self._ip_var = tk.StringVar()
+        # IP combo/entry - pre-populate with configured camera IPs
+        self._ip_var = tk.StringVar(value=CAMERA_1_HOST)
         self._ip_combo = ttk.Combobox(
             ip_row,
             textvariable=self._ip_var,
             width=15,
-            values=[]
+            values=[CAMERA_1_HOST, CAMERA_2_HOST]
         )
         self._ip_combo.pack(side='left', padx=(0, 6))
 

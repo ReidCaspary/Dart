@@ -9,11 +9,11 @@
 const char* ssid = "Sharewell Wifi";
 const char* password = "sharewell";
 
-// Static IP configuration (update gateway to match your network)
-IPAddress staticIP(172, 168, 168, 21);
-IPAddress gateway(172, 168, 168, 1);
+// Static IP configuration for Starlink network
+IPAddress staticIP(192, 168, 1, 21);
+IPAddress gateway(192, 168, 1, 1);
 IPAddress subnet(255, 255, 255, 0);
-IPAddress dns(172, 168, 168, 1);
+IPAddress dns(192, 168, 1, 1);
 
 // ================================
 // AI-Thinker ESP32-CAM Pin Definitions
@@ -240,7 +240,7 @@ void setup() {
     Serial.println();
     Serial.println("================================");
     Serial.println("Camera 2 - Dart Delivery System");
-    Serial.println("Static IP: 172.168.168.21");
+    Serial.println("Static IP: 192.168.1.21");
     Serial.println("================================");
 
     // Setup flash LED

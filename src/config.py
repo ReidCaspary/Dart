@@ -101,10 +101,7 @@ DECELERATION_RPS2: float = 8.5
 # =============================================================================
 
 # Drop cylinder (ESP32 Nano) IP address
-# Office network (testing)
-DROP_CYLINDER_HOST: str = "172.168.168.10"
-# Field network (uncomment for deployment)
-# DROP_CYLINDER_HOST: str = "192.168.1.11"
+DROP_CYLINDER_HOST: str = "192.168.1.10"
 
 # Default TCP port for drop cylinder WiFi connection
 DROP_CYLINDER_TCP_PORT: int = 8080
@@ -131,13 +128,9 @@ TRIM_MAX_US: int = 50
 # CAMERA CONFIGURATION
 # =============================================================================
 
-# Camera IP addresses
-# Office network (testing)
-CAMERA_1_HOST: str = "172.168.168.20"
-CAMERA_2_HOST: str = "172.168.168.21"
-# Field network (uncomment for deployment)
-# CAMERA_1_HOST: str = "192.168.1.20"
-# CAMERA_2_HOST: str = "192.168.1.21"
+# Camera IP addresses (static IPs on Starlink network)
+CAMERA_1_HOST: str = "192.168.1.20"
+CAMERA_2_HOST: str = "192.168.1.21"
 
 # Camera MJPEG stream port
 CAMERA_STREAM_PORT: int = 81
