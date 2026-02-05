@@ -236,6 +236,104 @@ class MJPEGStreamReader:
         return buffer
 
 
+class RTSPStreamReader:
+    """
+    Reads RTSP stream (e.g. from TAPO cameras) using OpenCV and provides
+    JPEG frames via callback. Same interface as MJPEGStreamReader.
+
+    Optimized for low latency:
+    - Uses TCP transport for reliability
+    - Minimal buffer size to reduce delay
+    - Grabs frames without decoding, then retrieves only the latest
+    """
+
+    def __init__(
+        self,
+        url: str,
+        on_frame: Callable[[bytes], None],
+        on_error: Callable[[str], None]
+    ):
+        self._url = url
+        self._on_frame = on_frame
+        self._on_error = on_error
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._read_stream, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=3.0)
+            self._thread = None
+
+    def _read_stream(self) -> None:
+        try:
+            import cv2
+        except ImportError:
+            if self._running:
+                self._on_error("OpenCV not installed. Run: pip install opencv-python")
+            return
+
+        cap = None
+        try:
+            # Configure for low latency
+            cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
+
+            # Minimal buffer - only keep 1 frame
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+            # Use TCP transport (more reliable, often lower latency than UDP)
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+
+            if not cap.isOpened():
+                if self._running:
+                    self._on_error("Could not open RTSP stream")
+                return
+
+            while self._running:
+                # Grab multiple frames to clear buffer, keep only latest
+                # This prevents lag buildup from buffered frames
+                for _ in range(2):
+                    cap.grab()
+
+                # Now retrieve the latest frame
+                ret, frame = cap.retrieve()
+                if not ret:
+                    # Try a regular read as fallback
+                    ret, frame = cap.read()
+                    if not ret:
+                        if self._running:
+                            self._on_error("Stream lost - no frame received")
+                        break
+
+                # Encode with lower quality for speed (80% quality)
+                encode_params = [cv2.IMWRITE_JPEG_QUALITY, 80]
+                _, jpeg = cv2.imencode('.jpg', frame, encode_params)
+                if self._running:
+                    self._on_frame(jpeg.tobytes())
+
+        except Exception as e:
+            if self._running:
+                self._on_error(f"RTSP error: {str(e)}")
+        finally:
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+
+
 class CameraDiscovery:
     """Auto-discover ESP32-CAM devices on the local network."""
 

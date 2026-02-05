@@ -20,6 +20,14 @@ from ..config import (
     STAC5_TCP_PORT,
     STAC5_POLL_INTERVAL_SEC,
     STEPS_PER_REVOLUTION,
+    CAMERA_1_HOST,
+    CAMERA_2_HOST,
+    TAPO_CAMERA_1_HOST,
+    TAPO_CAMERA_1_USERNAME,
+    TAPO_CAMERA_1_PASSWORD,
+    TAPO_CAMERA_2_HOST,
+    TAPO_CAMERA_2_USERNAME,
+    TAPO_CAMERA_2_PASSWORD,
 )
 from ..serial_manager import SerialManager, ConnectionState
 from ..wifi_manager import DropCylinderManager, DropCylinderConnectionState, ConnectionMode
@@ -32,7 +40,7 @@ from .settings_panel import SettingsPanel
 from .status_bar import StatusBar
 from .settings_dialog import SettingsDialog
 from .drop_cylinder_panel import DropCylinderPanel
-from .camera_panel import CameraPanel
+from .camera_panel import CameraPanel, TapoCameraPanel
 from .theme import COLORS, FONTS
 from .widgets import ModernButton
 
@@ -170,19 +178,44 @@ class MainWindow:
         )
         self._drop_cylinder_panel.grid(row=6, column=0, sticky="new", padx=5, pady=2)
 
-        # === RIGHT COLUMN (Cameras in container) ===
+        # === RIGHT COLUMN (Cameras in 2x2 grid) ===
 
-        # Container frame for cameras (anchored top-left, no stretching)
         camera_container = tk.Frame(self._root, bg=COLORS['bg_dark'])
         camera_container.grid(row=3, column=1, rowspan=4, sticky="nw", padx=5, pady=2)
 
-        # Camera Panel 1 (fixed size, no expand)
-        self._camera_panel = CameraPanel(camera_container)
-        self._camera_panel.pack(side='left', padx=(0, 2))
+        # Row 0: TAPO cameras (Home / Well)
+        self._tapo_camera_1 = TapoCameraPanel(
+            camera_container,
+            title="Home",
+            default_ip=TAPO_CAMERA_1_HOST,
+            default_user=TAPO_CAMERA_1_USERNAME,
+            default_pass=TAPO_CAMERA_1_PASSWORD,
+        )
+        self._tapo_camera_1.grid(row=0, column=0, padx=(0, 2), pady=(0, 2))
 
-        # Camera Panel 2 (fixed size, no expand)
-        self._camera_panel_2 = CameraPanel(camera_container)
-        self._camera_panel_2.pack(side='left', padx=(2, 0))
+        self._tapo_camera_2 = TapoCameraPanel(
+            camera_container,
+            title="Well",
+            default_ip=TAPO_CAMERA_2_HOST,
+            default_user=TAPO_CAMERA_2_USERNAME,
+            default_pass=TAPO_CAMERA_2_PASSWORD,
+        )
+        self._tapo_camera_2.grid(row=0, column=1, padx=(2, 0), pady=(0, 2))
+
+        # Row 1: ESP32 cameras (Dart / Launcher)
+        self._camera_panel = CameraPanel(
+            camera_container,
+            title="Dart",
+            default_ip=CAMERA_1_HOST,
+        )
+        self._camera_panel.grid(row=1, column=0, padx=(0, 2), pady=(2, 0))
+
+        self._camera_panel_2 = CameraPanel(
+            camera_container,
+            title="Launcher",
+            default_ip=CAMERA_2_HOST,
+        )
+        self._camera_panel_2.grid(row=1, column=1, padx=(2, 0), pady=(2, 0))
 
         # === BOTTOM ROW (Status Bar spans both columns) ===
 

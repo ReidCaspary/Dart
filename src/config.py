@@ -129,7 +129,7 @@ TRIM_MAX_US: int = 50
 # =============================================================================
 
 # Camera IP addresses (static IPs on Starlink network)
-CAMERA_1_HOST: str = "192.168.1.20"
+CAMERA_1_HOST: str = "192.168.1.24"
 CAMERA_2_HOST: str = "192.168.1.21"
 
 # Camera MJPEG stream port
@@ -157,6 +157,24 @@ CAMERA_DISPLAY_SIZES: dict = {
 
 # Default camera display size
 CAMERA_DEFAULT_SIZE: str = '240x180'
+
+
+# =============================================================================
+# TAPO CAMERA CONFIGURATION (RTSP)
+# =============================================================================
+
+# TAPO Camera 1 (Home)
+TAPO_CAMERA_1_HOST: str = "192.168.1.26"
+TAPO_CAMERA_1_USERNAME: str = "CAMERAHOME"
+TAPO_CAMERA_1_PASSWORD: str = "sharewell"
+
+# TAPO Camera 2 (Well)
+TAPO_CAMERA_2_HOST: str = "192.168.1.28"
+TAPO_CAMERA_2_USERNAME: str = "CAMERAWELL"
+TAPO_CAMERA_2_PASSWORD: str = "sharewell"
+
+# TAPO RTSP port
+TAPO_RTSP_PORT: int = 554
 
 
 # =============================================================================
