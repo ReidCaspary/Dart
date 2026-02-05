@@ -139,9 +139,9 @@ class DropCylinderPanel(tk.Frame):
         )
         ip_label.pack(side='left')
 
-        self._ip_var = tk.StringVar(value="192.168.4.1")
+        self._ip_var = tk.StringVar(value="192.168.1.10")
         self._ip_entry = ModernEntry(self._wifi_frame, width=14)
-        self._ip_entry.insert(0, "192.168.4.1")
+        self._ip_entry.insert(0, "192.168.1.10")
         self._ip_entry.pack(side='left', padx=(4, 0))
 
         # Serial widgets (hidden initially)
